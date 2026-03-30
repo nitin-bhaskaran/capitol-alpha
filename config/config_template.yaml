@@ -1,0 +1,62 @@
+# Capitol Alpha — Configuration
+# Copy this file to config.yaml and fill in your API keys.
+# NEVER commit config.yaml to git (it's in .gitignore).
+
+telegram:
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+  chat_id: "YOUR_CHAT_ID_HERE"
+  admin_user_ids:
+    - 123456789
+
+trading212:
+  api_key: "YOUR_T212_API_KEY"
+  api_secret: "YOUR_T212_API_SECRET"
+  environment: "demo"    # START WITH DEMO!
+  max_order_gbp: 500.0
+  max_daily_orders: 5
+  default_order_type: "limit"
+  limit_offset_pct: 0.5
+
+scoring:
+  vip_weight: 0.30
+  committee_weight: 0.20
+  filing_gap_weight: 0.20
+  trade_size_weight: 0.15
+  historical_alpha_weight: 0.15
+  min_score_to_alert: 0.40
+  min_score_to_suggest_trade: 0.60
+
+data_sources:
+  poll_interval_minutes: 30
+  capitol_trades_enabled: true
+  quiver_api_token: ""
+  finnhub_api_token: ""
+
+vip_watchlist:
+  tier1_politicians:
+    - "Donald J. Trump"
+    - "Donald Trump Jr."
+    - "Eric Trump"
+    - "Ivanka Trump"
+    - "Jared Kushner"
+    - "Nancy Pelosi"
+    - "Dan Crenshaw"
+    - "Tommy Tuberville"
+    - "Marjorie Taylor Greene"
+  tier2_politicians:
+    - "Michael McCaul"
+    - "Josh Gottheimer"
+    - "Mark Green"
+    - "Ro Khanna"
+    - "Kevin Hern"
+    - "Scott Franklin"
+    - "John Curtis"
+  high_signal_committees:
+    - "Armed Services"
+    - "Financial Services"
+    - "Energy and Commerce"
+    - "Intelligence"
+    - "Ways and Means"
+    - "Appropriations"
+    - "Foreign Affairs"
+    - "Judiciary"

@@ -1,0 +1,29 @@
+# Capitol Alpha - Dependencies
+# Install: pip install -r requirements.txt
+
+# Core
+pyyaml>=6.0
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+
+# Telegram bot
+python-telegram-bot>=21.0
+
+# Trading212 API (we use requests directly, but this wraps nicely)
+# trading212-api-extended>=1.0  # Optional: uncomment if you want the wrapper
+
+# Dashboard
+flask>=3.0
+
+# Data processing
+pandas>=2.1
+
+# Scheduling
+apscheduler>=3.10
+
+# Logging
+rich>=13.0
+
+# For Raspberry Pi — lightweight HTTP server
+gunicorn>=21.0
