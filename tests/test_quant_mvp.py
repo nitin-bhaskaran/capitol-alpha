@@ -34,17 +34,33 @@ def sample_trade():
 
 
 class FakeT212:
+    def __init__(self, price=250.0, filled_value=None, min_trade_quantity=0.1):
+        self.price = price
+        self.filled_value = filled_value
+        self.min_trade_quantity = min_trade_quantity
+        self.orders = []
+
     def find_instrument(self, ticker):
-        return {"ticker": f"{ticker}_US_EQ", "minTradeQuantity": 0.1}
+        return {
+            "ticker": f"{ticker}_US_EQ",
+            "minTradeQuantity": self.min_trade_quantity,
+            "currentPrice": self.price,
+        }
 
     def place_market_order(self, t212_ticker, quantity, extended_hours=False):
+        self.orders.append({"ticker": t212_ticker, "quantity": quantity})
         return {
             "id": 12345,
             "status": "FILLED",
             "ticker": t212_ticker,
             "filledQuantity": quantity,
-            "filledValue": 25.0,
+            "filledValue": self.filled_value if self.filled_value is not None else quantity * self.price,
         }
+
+
+class FakeT212WithoutPrice(FakeT212):
+    def find_instrument(self, ticker):
+        return {"ticker": f"{ticker}_US_EQ", "minTradeQuantity": self.min_trade_quantity}
 
 
 class FakePaper:
@@ -118,8 +134,69 @@ class QuantMvpTests(unittest.TestCase):
         positions = db.get_paper_positions()
         self.assertEqual(len(orders), 1)
         self.assertEqual(orders[0]["status"], "filled")
+        self.assertLessEqual(orders[0]["quantity"] * orders[0]["estimated_price"], config.execution.max_order_gbp_demo)
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0]["ticker"], "NVDA")
+
+    def test_trading212_position_uses_actual_fill_value(self):
+        db = self.make_db()
+        config = Config()
+        config.execution.mode = "t212_demo"
+        db.insert_raw_trade(sample_trade())
+        signal = ScoringEngine(db, config).score_unscored_trades()[0]
+
+        result = PaperTradingService(db, config, FakeT212(price=250.0, filled_value=90.0)).execute_signal(signal["id"])
+
+        self.assertTrue(result["ok"])
+        position = db.get_paper_positions()[0]
+        self.assertAlmostEqual(position["notional_gbp"], 90.0)
+        self.assertAlmostEqual(position["avg_price"], 225.0)
+
+    def test_trading212_rejects_when_notional_cannot_be_enforced(self):
+        db = self.make_db()
+        config = Config()
+        config.execution.mode = "t212_demo"
+        broker = FakeT212WithoutPrice()
+        db.insert_raw_trade(sample_trade())
+        signal = ScoringEngine(db, config).score_unscored_trades()[0]
+
+        result = PaperTradingService(db, config, broker).execute_signal(signal["id"])
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Cannot enforce notional cap", result["reason"])
+        self.assertEqual(broker.orders, [])
+
+    def test_trading212_rejects_when_min_quantity_exceeds_notional(self):
+        db = self.make_db()
+        config = Config()
+        config.execution.mode = "t212_demo"
+        config.execution.max_order_gbp_demo = 100.0
+        broker = FakeT212(price=2000.0, min_trade_quantity=0.1)
+        db.insert_raw_trade(sample_trade())
+        signal = ScoringEngine(db, config).score_unscored_trades()[0]
+
+        result = PaperTradingService(db, config, broker).execute_signal(signal["id"])
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Minimum broker quantity", result["reason"])
+        self.assertEqual(broker.orders, [])
+
+    def test_duplicate_execute_returns_existing_order_without_rejecting_signal(self):
+        db = self.make_db()
+        config = Config()
+        config.execution.mode = "t212_demo"
+        db.insert_raw_trade(sample_trade())
+        signal = ScoringEngine(db, config).score_unscored_trades()[0]
+        service = PaperTradingService(db, config, FakeT212())
+
+        first = service.execute_signal(signal["id"])
+        second = service.execute_signal(signal["id"])
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(first["order_id"], second["order_id"])
+        self.assertEqual(len(db.get_recent_paper_orders()), 1)
+        self.assertEqual(db.get_signal_by_id(signal["id"])["status"], "executed")
 
     def test_sell_signal_is_rejected_by_long_only_gate(self):
         db = self.make_db()

@@ -21,7 +21,7 @@ execution:
   live_enabled: false        # Must remain false until validation gates pass.
   max_order_gbp_demo: 100.0
   max_order_gbp_live: 50.0
-  default_demo_quantity: 0.1 # Trading212 API places orders by quantity.
+  default_demo_quantity: 0.1 # Used by local_paper; T212 quantity is sized from a price estimate.
   default_order_type: "market"
   validation_days_required: 10
   allow_fractional_shares: true

@@ -79,9 +79,9 @@ class PaperTradingService:
         if not signal:
             return self._rejected_stub(signal_id, "Signal not found.")
 
-        duplicate = self._has_active_order(signal_id)
+        duplicate = self._get_active_order(signal_id)
         if duplicate:
-            return self._record_rejection(signal, "Duplicate active paper order for signal.")
+            return self._duplicate_order_result(duplicate)
 
         mode = self.config.execution.mode
         if mode == "disabled":
@@ -151,13 +151,27 @@ class PaperTradingService:
             return self._record_rejection(signal, f"Trading212 instrument not found for {signal['ticker']}.")
 
         t212_ticker = instrument.get("ticker")
-        quantity = self._order_quantity(instrument, notional)
+        estimated_price = self._estimate_unit_price(signal, instrument)
+        if estimated_price is None:
+            return self._record_rejection(
+                signal,
+                "Cannot enforce notional cap without an account-currency price estimate.",
+            )
+
+        quantity, sizing_error = self._order_quantity(instrument, notional, estimated_price)
+        if sizing_error:
+            return self._record_rejection(signal, sizing_error)
+
+        estimated_notional = float(quantity or 0) * estimated_price
         order_type = self.config.execution.default_order_type.lower()
         request = {
             "ticker": t212_ticker,
             "quantity": quantity,
             "order_type": order_type,
             "mode": mode,
+            "notional_cap_gbp": notional,
+            "estimated_price": estimated_price,
+            "estimated_notional_gbp": estimated_notional,
         }
 
         now = self._now()
@@ -168,11 +182,17 @@ class PaperTradingService:
 
         status = self._normalise_status(response)
         broker_order_id = str(response.get("id") or response.get("orderId") or "")
-        fill_quantity = response.get("filledQuantity")
-        fill_value = response.get("filledValue")
-        fill_price = None
-        if fill_quantity and fill_value:
-            fill_price = float(fill_value) / max(float(fill_quantity), 0.000001)
+        fill_quantity = self._float_or_none(response.get("filledQuantity"))
+        fill_value = self._float_or_none(response.get("filledValue"))
+        fill_price = self._first_float(
+            response,
+            ("fillPrice", "filledPrice", "averagePrice", "avgFillPrice", "price"),
+        )
+        if fill_price is None and fill_quantity and fill_value is not None:
+            fill_price = fill_value / max(fill_quantity, 0.000001)
+        actual_notional = fill_value
+        if actual_notional is None and fill_price is not None and fill_quantity:
+            actual_notional = fill_price * fill_quantity
 
         order_id = self.db.insert_paper_order({
             "signal_id": signal["id"],
@@ -186,7 +206,7 @@ class PaperTradingService:
             "status": status,
             "quantity": quantity,
             "intended_notional_gbp": notional,
-            "estimated_price": fill_price,
+            "estimated_price": estimated_price,
             "limit_price": None,
             "fill_price": fill_price,
             "fill_quantity": fill_quantity,
@@ -200,8 +220,14 @@ class PaperTradingService:
             "filled_at": now if status == "filled" else None,
         })
 
-        if status == "filled" and fill_price:
-            self._upsert_position(signal, t212_ticker, float(fill_quantity or quantity), fill_price, notional)
+        if status == "filled" and fill_price and fill_quantity and actual_notional is not None:
+            self._upsert_position(
+                signal,
+                t212_ticker,
+                fill_quantity,
+                fill_price,
+                actual_notional,
+            )
             self.db.update_signal_status(signal["id"], "executed")
         elif status == "rejected":
             self.db.update_signal_status(signal["id"], "rejected")
@@ -242,13 +268,25 @@ class PaperTradingService:
     def _rejected_stub(self, signal_id: int, reason: str) -> Dict[str, Any]:
         return {"ok": False, "signal_id": signal_id, "status": "rejected", "reason": reason}
 
-    def _has_active_order(self, signal_id: int) -> bool:
+    def _get_active_order(self, signal_id: int) -> Optional[Dict[str, Any]]:
         orders = self.db.get_recent_paper_orders(limit=500)
-        return any(
-            order["signal_id"] == signal_id
-            and (order["status"] or "").lower() in ACTIVE_ORDER_STATUSES
-            for order in orders
+        return next(
+            (
+                order for order in orders
+                if order["signal_id"] == signal_id
+                and (order["status"] or "").lower() in ACTIVE_ORDER_STATUSES
+            ),
+            None,
         )
+
+    def _duplicate_order_result(self, order: Dict[str, Any]) -> Dict[str, Any]:
+        status = (order.get("status") or "").lower()
+        return {
+            "ok": status == "filled",
+            "order_id": order["id"],
+            "status": status,
+            "reason": "Existing paper order already recorded for signal.",
+        }
 
     def _live_allowed(self) -> bool:
         if not self.config.execution.live_enabled:
@@ -269,12 +307,100 @@ class PaperTradingService:
             return self.config.execution.max_order_gbp_live
         return self.config.execution.max_order_gbp_demo
 
-    def _order_quantity(self, instrument: Dict[str, Any], notional: float) -> float:
+    def _order_quantity(
+        self,
+        instrument: Dict[str, Any],
+        notional: float,
+        estimated_price: float,
+    ) -> Tuple[Optional[float], Optional[str]]:
+        if estimated_price <= 0:
+            return None, "Price estimate must be positive to size broker order."
+
         min_qty = float(instrument.get("minTradeQuantity") or 0.0)
-        quantity = max(self.config.execution.default_demo_quantity, min_qty)
         if not self.config.execution.allow_fractional_shares:
-            quantity = max(1.0, round(quantity))
-        return quantity
+            min_qty = max(1.0, min_qty)
+
+        max_quantity = notional / estimated_price
+        if max_quantity <= 0:
+            return None, "Configured order notional is too small."
+
+        if self.config.execution.allow_fractional_shares:
+            quantity = int(max_quantity * 1_000_000) / 1_000_000
+            if quantity < min_qty:
+                return None, "Minimum broker quantity would exceed configured notional cap."
+        else:
+            quantity = int(max_quantity)
+            if quantity < min_qty:
+                return None, "Whole-share quantity would exceed configured notional cap."
+
+        estimated_notional = quantity * estimated_price
+        if estimated_notional > notional + 0.01:
+            return None, "Calculated broker quantity would exceed configured notional cap."
+        return quantity, None
+
+    def _estimate_unit_price(
+        self,
+        signal: Dict[str, Any],
+        instrument: Dict[str, Any],
+    ) -> Optional[float]:
+        price = self._first_float(
+            instrument,
+            (
+                "estimatedPriceGbp",
+                "priceEstimateGbp",
+                "currentPriceGbp",
+                "currentPrice",
+                "lastPrice",
+                "ask",
+                "bid",
+                "price",
+            ),
+        )
+        if price and price > 0:
+            return price
+
+        existing = next(
+            (p for p in self.db.get_paper_positions() if p["ticker"] == signal["ticker"]),
+            None,
+        )
+        if existing and existing.get("avg_price"):
+            return float(existing["avg_price"])
+
+        if self.t212 and hasattr(self.t212, "get_position"):
+            position = self.t212.get_position(instrument.get("ticker"))
+            if position:
+                return self._first_float(
+                    position,
+                    (
+                        "currentPriceGbp",
+                        "currentPrice",
+                        "averagePrice",
+                        "avgPrice",
+                        "price",
+                    ),
+                )
+        return None
+
+    def _first_float(self, payload: Dict[str, Any], keys: Tuple[str, ...]) -> Optional[float]:
+        for key in keys:
+            value = self._float_or_none(payload.get(key))
+            if value is not None:
+                return value
+        return None
+
+    def _float_or_none(self, value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            for nested_key in ("amount", "value", "price"):
+                parsed = self._float_or_none(value.get(nested_key))
+                if parsed is not None:
+                    return parsed
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _normalise_status(self, response: Dict[str, Any]) -> str:
         if response.get("error"):
