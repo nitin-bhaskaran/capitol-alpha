@@ -22,42 +22,172 @@ SECTOR_BY_TICKER = {
     "GOOGL": "technology",
     "META": "technology",
     "AMZN": "technology",
+    "ADBE": "technology",
+    "CRM": "technology",
+    "NOW": "technology",
+    "ORCL": "technology",
+    "IBM": "technology",
+    "CSCO": "technology",
+    "PANW": "technology",
+    "CRWD": "technology",
+    "SNOW": "technology",
+    "PLTR": "technology",
+    "NET": "technology",
     "NVDA": "semiconductors",
     "AMD": "semiconductors",
     "INTC": "semiconductors",
     "TSM": "semiconductors",
+    "AVGO": "semiconductors",
+    "QCOM": "semiconductors",
+    "TXN": "semiconductors",
+    "ADI": "semiconductors",
+    "MU": "semiconductors",
+    "MRVL": "semiconductors",
+    "LRCX": "semiconductors",
+    "KLAC": "semiconductors",
+    "ASML": "semiconductors",
+    "AMAT": "semiconductors",
+    "ON": "semiconductors",
+    "NXPI": "semiconductors",
+    "MCHP": "semiconductors",
+    "SNDK": "semiconductors",
+    "LITE": "semiconductors",
+    "FN": "semiconductors",
     "LMT": "defense",
     "RTX": "defense",
     "NOC": "defense",
     "BA": "defense",
     "GD": "defense",
     "LHX": "defense",
+    "HII": "defense",
+    "LDOS": "defense",
+    "SAIC": "defense",
+    "KTOS": "defense",
+    "AVAV": "defense",
     "JPM": "financials",
     "BAC": "financials",
     "GS": "financials",
     "MS": "financials",
     "C": "financials",
     "WFC": "financials",
+    "V": "financials",
+    "MA": "financials",
+    "AXP": "financials",
+    "BLK": "financials",
+    "BX": "financials",
+    "SCHW": "financials",
+    "COF": "financials",
+    "USB": "financials",
+    "PNC": "financials",
+    "CME": "financials",
     "XOM": "energy",
     "CVX": "energy",
     "COP": "energy",
     "SLB": "energy",
+    "EOG": "energy",
+    "OXY": "energy",
+    "PSX": "energy",
+    "VLO": "energy",
+    "MPC": "energy",
+    "HAL": "energy",
+    "LNG": "energy",
+    "KMI": "energy",
     "PFE": "healthcare",
     "JNJ": "healthcare",
     "UNH": "healthcare",
     "MRK": "healthcare",
     "ABBV": "healthcare",
     "LLY": "healthcare",
+    "ABT": "healthcare",
+    "MDT": "healthcare",
+    "TMO": "healthcare",
+    "DHR": "healthcare",
+    "ISRG": "healthcare",
+    "BMY": "healthcare",
+    "AMGN": "healthcare",
+    "GILD": "healthcare",
+    "CVS": "healthcare",
+    "ELV": "healthcare",
+    "HUM": "healthcare",
+    "CAT": "industrials",
+    "DE": "industrials",
+    "URI": "industrials",
+    "HON": "industrials",
+    "GE": "industrials",
+    "ETN": "industrials",
+    "EMR": "industrials",
+    "WMT": "consumer",
+    "COST": "consumer",
+    "HD": "consumer",
+    "LOW": "consumer",
+    "MCD": "consumer",
+    "TSLA": "consumer",
+    "DIS": "communications",
+    "NFLX": "communications",
+    "T": "communications",
+    "VZ": "communications",
+    "CMCSA": "communications",
+    "SPY": "broad_market",
+    "QQQ": "broad_market",
+    "IWM": "broad_market",
+    "DIA": "broad_market",
+    "VOO": "broad_market",
+    "VTI": "broad_market",
+    "IVV": "broad_market",
+    "XLK": "technology",
+    "XLF": "financials",
+    "XLE": "energy",
+    "XLI": "industrials",
+    "XLV": "healthcare",
 }
 
 
 SECTOR_COMMITTEE_MAP = {
-    "defense": ["Armed Services"],
-    "technology": ["Intelligence", "Judiciary"],
-    "semiconductors": ["Armed Services", "Energy and Commerce"],
-    "financials": ["Financial Services"],
-    "energy": ["Energy and Commerce"],
-    "healthcare": ["Energy and Commerce"],
+    "defense": ["Armed Services", "Appropriations", "Foreign Affairs"],
+    "technology": ["Intelligence", "Judiciary", "Energy and Commerce"],
+    "semiconductors": [
+        "Armed Services",
+        "Energy and Commerce",
+        "Science, Space, and Technology",
+    ],
+    "financials": ["Financial Services", "Banking, Housing, and Urban Affairs"],
+    "energy": ["Energy and Commerce", "Natural Resources"],
+    "healthcare": [
+        "Energy and Commerce",
+        "Ways and Means",
+        "Health, Education, Labor, and Pensions",
+    ],
+    "industrials": ["Transportation and Infrastructure", "Appropriations"],
+    "consumer": ["Energy and Commerce"],
+    "communications": ["Energy and Commerce", "Judiciary"],
+    "broad_market": ["Appropriations", "Finance"],
+}
+
+
+SECTOR_KEYWORDS = {
+    "semiconductors": [
+        "semiconductor",
+        "chip",
+        "microchip",
+        "integrated circuit",
+        "photonics",
+    ],
+    "technology": [
+        "software",
+        "cloud",
+        "cybersecurity",
+        "internet",
+        "technology",
+        "data",
+        "artificial intelligence",
+    ],
+    "defense": ["defense", "aerospace", "missile", "weapons", "shipbuilding"],
+    "financials": ["bank", "financial", "capital", "payments", "exchange"],
+    "energy": ["energy", "oil", "gas", "pipeline", "solar", "renewable"],
+    "healthcare": ["pharma", "biotech", "medical", "health", "therapeutics"],
+    "industrials": ["industrial", "machinery", "construction", "railroad"],
+    "consumer": ["retail", "restaurant", "consumer", "automotive"],
+    "communications": ["media", "telecom", "entertainment", "streaming"],
 }
 
 
@@ -114,8 +244,20 @@ def vip_score_and_tier(politician: str, config: Config) -> Tuple[float, Optional
     return 0.25, None
 
 
-def committee_score(ticker: str, config: Config) -> float:
-    sector = SECTOR_BY_TICKER.get(ticker.upper(), "unknown")
+def infer_sector(ticker: str, asset_description: str = "") -> str:
+    sector = SECTOR_BY_TICKER.get(ticker.upper())
+    if sector:
+        return sector
+
+    description = (asset_description or "").lower()
+    for candidate, keywords in SECTOR_KEYWORDS.items():
+        if any(keyword in description for keyword in keywords):
+            return candidate
+    return "unknown"
+
+
+def committee_score(ticker: str, config: Config, asset_description: str = "") -> float:
+    sector = infer_sector(ticker, asset_description)
     relevant = SECTOR_COMMITTEE_MAP.get(sector, [])
     if not relevant:
         return 0.36
@@ -141,12 +283,13 @@ def feature_hash(features: Dict[str, Any]) -> str:
 
 def build_event_features(trade: Dict[str, Any], config: Config) -> Dict[str, Any]:
     ticker = normalize_ticker(trade.get("ticker") or "")
+    asset_description = trade.get("asset_description") or ""
     politician = trade.get("politician_name") or ""
     direction = transaction_to_direction(trade.get("transaction_type", ""))
     gap = filing_gap_days(trade.get("transaction_date", ""), trade.get("filing_date", ""))
     midpoint = midpoint_amount(trade.get("amount_low"), trade.get("amount_high"))
     vip, tier = vip_score_and_tier(politician, config)
-    sector = SECTOR_BY_TICKER.get(ticker, "unknown")
+    sector = infer_sector(ticker, asset_description)
     source = trade.get("source") or "unknown"
     source_quality = SOURCE_QUALITY.get(source, 0.55)
     chamber = (trade.get("politician_chamber") or "unknown").lower()
@@ -168,7 +311,7 @@ def build_event_features(trade: Dict[str, Any], config: Config) -> Dict[str, Any
         "amount_score": amount_score(midpoint),
         "vip_score": vip,
         "vip_tier": tier,
-        "committee_score": committee_score(ticker, config),
+        "committee_score": committee_score(ticker, config, asset_description),
         "recency_score": recency_score(trade.get("filing_date")),
     }
     features["feature_hash"] = feature_hash(features)

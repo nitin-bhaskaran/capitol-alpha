@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.alerts.telegram_bot import TelegramBot
-from src.config import Config
+from src.config import Config, _merge_unique
 from src.data import house_watcher, senate_watcher
 from src.data.pipeline import DataPipeline
 from src.database import Database
@@ -213,6 +213,37 @@ class QuantMvpTests(unittest.TestCase):
         features = build_event_features({**sample_trade(), "ticker": "AMD:US"}, config)
         self.assertEqual(features["ticker"], "AMD")
         self.assertEqual(features["sector"], "semiconductors")
+
+    def test_broader_vip_defaults_include_more_names(self):
+        watchlist = Config().vip_watchlist
+
+        self.assertIn("Debbie Wasserman Schultz", watchlist.tier1_politicians)
+        self.assertIn("Ron Wyden", watchlist.tier2_politicians)
+        self.assertIn("Science, Space, and Technology", watchlist.high_signal_committees)
+
+    def test_config_watchlist_values_merge_with_defaults(self):
+        merged = _merge_unique(["Nancy Pelosi", "Ron Wyden"], ["Nancy Pelosi", "Custom Trader"])
+
+        self.assertEqual(merged, ["Nancy Pelosi", "Ron Wyden", "Custom Trader"])
+
+    def test_sector_inference_covers_expanded_universe(self):
+        config = Config()
+
+        panw = build_event_features(
+            {**sample_trade(), "ticker": "PANW:US", "asset_description": "Palo Alto Networks"},
+            config,
+        )
+        inferred = build_event_features(
+            {
+                **sample_trade(),
+                "ticker": "XYZ",
+                "asset_description": "Cybersecurity software and cloud data platform",
+            },
+            config,
+        )
+
+        self.assertEqual(panw["sector"], "technology")
+        self.assertEqual(inferred["sector"], "technology")
 
     def test_model_outputs_tradeable_shape(self):
         config = Config()

@@ -105,16 +105,29 @@ class VIPWatchlist:
         "Donald J. Trump", "Donald Trump Jr.", "Eric Trump",
         "Ivanka Trump", "Jared Kushner",
         "Nancy Pelosi", "Dan Crenshaw", "Tommy Tuberville",
-        "Marjorie Taylor Greene",
+        "Marjorie Taylor Greene", "Michael McCaul", "Josh Gottheimer",
+        "Ro Khanna", "Kevin Hern", "Mark Green", "John Curtis",
+        "Debbie Wasserman Schultz", "Susie Lee",
     ])
     tier2_politicians: List[str] = field(default_factory=lambda: [
-        "Michael McCaul", "Josh Gottheimer", "Mark Green",
-        "Ro Khanna", "Kevin Hern", "Scott Franklin", "John Curtis",
+        "Scott Franklin", "Pat Roberts", "Ron Wyden", "Richard Blumenthal",
+        "Thomas Carper", "Sheldon Whitehouse", "John Hickenlooper",
+        "Cynthia Lummis", "Rand Paul", "Rick Scott", "Markwayne Mullin",
+        "Roger Marshall", "Bill Hagerty", "John Hoeven", "Jerry Moran",
+        "Shelley Moore Capito", "Pat Toomey", "David Perdue",
+        "Kelly Loeffler", "Tom Malinowski", "Elaine Luria",
+        "Abigail Spanberger", "French Hill", "Dan Meuser", "Blake Moore",
+        "Lloyd Doggett", "Suzan DelBene", "Brian Mast", "Virginia Foxx",
     ])
     high_signal_committees: List[str] = field(default_factory=lambda: [
         "Armed Services", "Financial Services", "Energy and Commerce",
         "Intelligence", "Ways and Means", "Appropriations",
-        "Foreign Affairs", "Judiciary",
+        "Foreign Affairs", "Judiciary", "Agriculture",
+        "Banking, Housing, and Urban Affairs",
+        "Commerce, Science, and Transportation", "Finance",
+        "Health, Education, Labor, and Pensions", "Homeland Security",
+        "Natural Resources", "Oversight", "Science, Space, and Technology",
+        "Small Business", "Transportation and Infrastructure",
     ])
 
 
@@ -132,6 +145,19 @@ class Config:
 
 def _dataclass_kwargs(cls, raw: dict) -> dict:
     return {k: raw[k] for k in raw if k in cls.__dataclass_fields__}
+
+
+def _merge_unique(defaults: List[str], configured: Optional[List[str]]) -> List[str]:
+    values = [*(defaults or []), *(configured or [])]
+    merged = []
+    seen = set()
+    for value in values:
+        key = value.strip().lower() if isinstance(value, str) else value
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(value)
+    return merged
 
 
 def load_config(config_path: Optional[Path] = None) -> Config:
@@ -184,10 +210,14 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     if vip:
         defaults = VIPWatchlist()
         config.vip_watchlist = VIPWatchlist(
-            tier1_politicians=vip.get("tier1_politicians", defaults.tier1_politicians),
-            tier2_politicians=vip.get("tier2_politicians", defaults.tier2_politicians),
-            high_signal_committees=vip.get(
-                "high_signal_committees", defaults.high_signal_committees
+            tier1_politicians=_merge_unique(
+                defaults.tier1_politicians, vip.get("tier1_politicians")
+            ),
+            tier2_politicians=_merge_unique(
+                defaults.tier2_politicians, vip.get("tier2_politicians")
+            ),
+            high_signal_committees=_merge_unique(
+                defaults.high_signal_committees, vip.get("high_signal_committees")
             ),
         )
 

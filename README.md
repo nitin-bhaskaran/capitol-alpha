@@ -137,6 +137,12 @@ The shipped defaults are designed to start validation quickly without live-marke
 
 API keys belong only in local config files and should not be committed.
 
+## Analysis Universe
+
+Capitol Alpha scores every ingested disclosure row; the politician names in `vip_watchlist` are prior boosts, not the full universe. Local `config/config.yaml` names are merged with the broader built-in defaults so new defaults are not lost when you have an older config file.
+
+The default model also maps a wider set of technology, semiconductor, defense, financial, energy, healthcare, industrial, consumer, communications, and broad-market tickers. Unknown tickers can still receive a sector from issuer-description keywords, so paper validation is not limited to the hand-written ticker map.
+
 ## Source Health
 
 The historical House Stock Watcher S3 feed now returns 403, so the default config leaves `house_watcher_url` blank and relies on Capitol Trades for House disclosure coverage. Senate Stock Watcher uses the GitHub raw aggregate mirror.
