@@ -51,6 +51,9 @@ scoring:
   min_score_to_suggest_trade: 0.60
 
 data_sources:
+  # House Stock Watcher S3 is retired/403; Capitol Trades provides House coverage.
+  house_watcher_url: ""
+  senate_watcher_url: "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json"
   poll_interval_minutes: 30
   capitol_trades_enabled: true
   quiver_api_token: ""

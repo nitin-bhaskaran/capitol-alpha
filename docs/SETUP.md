@@ -189,3 +189,5 @@ If Trading212 rejects an order, check execution mode, API environment, API permi
 If no trades execute, inspect the dashboard model/risk reasons first. Conservative gates are expected to reject weak or uncalibrated signals.
 
 If the dashboard is unavailable, check that port `5055` is free or change the dashboard port in config.
+
+If House Stock Watcher shows zero direct rows, that is expected with the default config. The old public S3 feed now returns 403, so Capitol Alpha uses Capitol Trades for House coverage and the GitHub raw Senate Stock Watcher mirror for Senate coverage.

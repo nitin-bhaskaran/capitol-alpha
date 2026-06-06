@@ -136,3 +136,7 @@ The shipped defaults are designed to start validation quickly without live-marke
 - Conservative model thresholds
 
 API keys belong only in local config files and should not be committed.
+
+## Source Health
+
+The historical House Stock Watcher S3 feed now returns 403, so the default config leaves `house_watcher_url` blank and relies on Capitol Trades for House disclosure coverage. Senate Stock Watcher uses the GitHub raw aggregate mirror.

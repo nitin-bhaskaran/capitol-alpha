@@ -86,13 +86,10 @@ class ScoringConfig:
 
 @dataclass
 class DataSourceConfig:
-    house_watcher_url: str = (
-        "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com"
-        "/data/all_transactions.json"
-    )
+    house_watcher_url: str = ""
     senate_watcher_url: str = (
-        "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com"
-        "/aggregate/all_transactions.json"
+        "https://raw.githubusercontent.com/timothycarambat/"
+        "senate-stock-watcher-data/master/aggregate/all_transactions.json"
     )
     quiver_api_token: str = ""
     finnhub_api_token: str = ""

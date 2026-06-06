@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from src.alerts.telegram_bot import TelegramBot
 from src.config import Config
+from src.data import house_watcher, senate_watcher
 from src.database import Database
 from src.execution.paper import PaperTradingService
 from src.execution.quotes import MarketQuoteService
@@ -104,6 +105,34 @@ class FakeQuoteSession:
         if "api.frankfurter.app" in url:
             return FakeResponse({"rates": {"GBP": 0.8}})
         return FakeResponse({})
+
+
+class FakeSenateRequests:
+    def __init__(self):
+        self.urls = []
+
+    def get(self, url, headers=None, timeout=None):
+        self.urls.append(url)
+        return FakeResponse([{
+            "transaction_date": "11/10/2020",
+            "owner": "Spouse",
+            "ticker": "NVDA",
+            "asset_description": "NVIDIA Corporation",
+            "type": "Purchase",
+            "amount": "$15,001 - $50,000",
+            "comment": "",
+            "senator": "Nancy Pelosi",
+            "ptr_link": "https://example.test/ptr",
+        }])
+
+
+class FakeHouseRequests:
+    def __init__(self):
+        self.called = False
+
+    def get(self, url, headers=None, timeout=None):
+        self.called = True
+        return FakeResponse([])
 
 
 class FakePaper:
@@ -214,6 +243,26 @@ class QuantMvpTests(unittest.TestCase):
 
         self.assertIn("bot<redacted>/getMe", record.getMessage())
         self.assertNotIn("123456:secret", record.getMessage())
+
+    def test_house_legacy_s3_is_skipped_without_request(self):
+        fake_requests = FakeHouseRequests()
+
+        with patch.object(house_watcher, "requests", fake_requests):
+            trades = house_watcher.fetch_house_trades(house_watcher.LEGACY_S3_URL)
+
+        self.assertEqual(trades, [])
+        self.assertFalse(fake_requests.called)
+
+    def test_senate_legacy_s3_uses_github_raw_fallback(self):
+        fake_requests = FakeSenateRequests()
+
+        with patch.object(senate_watcher, "requests", fake_requests):
+            trades = senate_watcher.fetch_senate_trades(senate_watcher.LEGACY_S3_URL)
+
+        self.assertEqual(fake_requests.urls, [senate_watcher.GITHUB_RAW_URL])
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades[0]["ticker"], "NVDA")
+        self.assertEqual(trades[0]["politician_chamber"], "Senate")
 
     def test_scoring_persists_signal_and_feature_snapshot(self):
         db = self.make_db()
