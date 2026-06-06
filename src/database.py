@@ -257,11 +257,20 @@ class Database:
         try:
             yield conn
             conn.commit()
-        except Exception:
-            conn.rollback()
+        except BaseException:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             raise
         finally:
-            conn.close()
+            try:
+                conn.close()
+            except KeyboardInterrupt:
+                # During Ctrl+C shutdown, a second interrupt can arrive while
+                # sqlite is closing. The process is already stopping, so avoid
+                # surfacing a noisy traceback from cleanup.
+                pass
 
     def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: Dict[str, str]):
         existing = {

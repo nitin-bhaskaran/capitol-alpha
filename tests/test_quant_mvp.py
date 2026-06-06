@@ -176,6 +176,11 @@ class FakeDashboard:
         return None
 
 
+class InterruptingPipeline:
+    def run_full_ingestion(self):
+        raise KeyboardInterrupt()
+
+
 class FakeQuery:
     def __init__(self):
         self.edited = None
@@ -505,6 +510,7 @@ class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):
         app.bot = FakeLifecycleBot()
         app.scheduler = FakeScheduler()
         app.db = Database(Path(tempfile.mkdtemp()) / "test.db")
+        app._shutdown_requested = False
 
         async def cancel_sleep(_seconds):
             raise asyncio.CancelledError()
@@ -519,6 +525,15 @@ class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(app.bot.started)
         self.assertTrue(app.bot.stopped)
         self.assertTrue(app.scheduler.shutdown_called)
+
+    async def test_run_cycle_handles_keyboard_interrupt_as_shutdown(self):
+        app = object.__new__(CapitolAlpha)
+        app.pipeline = InterruptingPipeline()
+        app._shutdown_requested = False
+
+        await app.run_cycle()
+
+        self.assertTrue(app._shutdown_requested)
 
 
 if __name__ == "__main__":

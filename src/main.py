@@ -15,6 +15,7 @@ Run with:
 
 import asyncio
 import logging
+import signal
 import threading
 from datetime import datetime
 
@@ -69,9 +70,14 @@ class CapitolAlpha:
         self.paper = PaperTradingService(self.db, self.config, self.t212)
         self.bot = TelegramBot(self.config, self.db, self.t212, self.paper)
         self.scheduler = AsyncIOScheduler()
+        self._shutdown_requested = False
 
     async def run_cycle(self):
         """Run one ingestion, scoring, and alerting cycle."""
+        if self._shutdown_requested:
+            logger.info("Skipping cycle because shutdown is in progress")
+            return
+
         logger.info("=" * 60)
         logger.info("Running cycle at %s", datetime.now().isoformat())
         logger.info("=" * 60)
@@ -79,6 +85,10 @@ class CapitolAlpha:
         try:
             summary = self.pipeline.run_full_ingestion()
             logger.info("Ingestion summary: %s", summary)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            self.request_shutdown()
+            logger.info("Cycle interrupted during ingestion")
+            return
         except Exception as e:
             logger.error("Ingestion failed: %s", e, exc_info=True)
             return
@@ -86,6 +96,10 @@ class CapitolAlpha:
         try:
             new_signals = self.scorer.score_unscored_trades()
             logger.info("New signals: %s", len(new_signals))
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            self.request_shutdown()
+            logger.info("Cycle interrupted during scoring")
+            return
         except Exception as e:
             logger.error("Scoring failed: %s", e, exc_info=True)
             return
@@ -99,14 +113,23 @@ class CapitolAlpha:
         for sig in alertable:
             try:
                 await self.bot.send_signal_alert(sig)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                self.request_shutdown()
+                logger.info("Cycle interrupted during alert delivery")
+                return
             except Exception as e:
                 logger.error("Failed to alert signal %s: %s", sig.get("id"), e)
 
         logger.info("Cycle complete: %s alerts sent", len(alertable))
 
+    def request_shutdown(self):
+        """Mark shutdown intent so in-flight scheduled work can exit quietly."""
+        self._shutdown_requested = True
+
     async def run(self):
         """Start the full application."""
         setup_logging()
+        previous_sigint_handler = self._install_sigint_handler()
         logger.info("Capitol Alpha starting")
         logger.info("Environment: %s", self.config.trading212.environment)
         logger.info("Execution mode: %s", self.config.execution.mode)
@@ -151,17 +174,40 @@ class CapitolAlpha:
         logger.info("Capitol Alpha is running. Press Ctrl+C to stop.")
 
         try:
-            while True:
+            while not self._shutdown_requested:
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
+            self.request_shutdown()
             logger.info("Shutdown requested")
         except (KeyboardInterrupt, SystemExit):
+            self.request_shutdown()
             logger.info("Shutdown requested")
         finally:
-            await self.shutdown()
+            try:
+                await self.shutdown()
+            finally:
+                self._restore_sigint_handler(previous_sigint_handler)
+
+    def _install_sigint_handler(self):
+        """Let the first Ctrl+C interrupt blocking sync work on Windows."""
+        try:
+            previous = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            return previous
+        except (ValueError, AttributeError):
+            return None
+
+    def _restore_sigint_handler(self, previous_handler):
+        if previous_handler is None:
+            return
+        try:
+            signal.signal(signal.SIGINT, previous_handler)
+        except (ValueError, AttributeError):
+            pass
 
     async def shutdown(self):
         """Stop background services without surfacing Ctrl+C tracebacks."""
+        self.request_shutdown()
         logger.info("Shutting down...")
         try:
             if getattr(self.scheduler, "running", False):
