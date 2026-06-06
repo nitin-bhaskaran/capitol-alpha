@@ -279,35 +279,62 @@ class Database:
 
     # Raw trades
 
+    def _insert_raw_trade(self, conn: sqlite3.Connection, trade: Dict[str, Any]) -> Optional[int]:
+        cur = conn.execute("""
+            INSERT OR IGNORE INTO raw_trades (
+                source, politician_name, politician_party, politician_state,
+                politician_chamber, ticker, asset_description, transaction_type,
+                transaction_date, filing_date, amount_range, amount_low, amount_high,
+                owner, comment, source_url, raw_json
+            ) VALUES (
+                :source, :politician_name, :politician_party, :politician_state,
+                :politician_chamber, :ticker, :asset_description, :transaction_type,
+                :transaction_date, :filing_date, :amount_range, :amount_low, :amount_high,
+                :owner, :comment, :source_url, :raw_json
+            )
+        """, trade)
+        return cur.lastrowid if cur.rowcount > 0 else None
+
     def insert_raw_trade(self, trade: Dict[str, Any]) -> Optional[int]:
         """Insert a raw trade. Returns row ID or None if duplicate."""
         with self.connection() as conn:
-            cur = conn.execute("""
-                INSERT OR IGNORE INTO raw_trades (
-                    source, politician_name, politician_party, politician_state,
-                    politician_chamber, ticker, asset_description, transaction_type,
-                    transaction_date, filing_date, amount_range, amount_low, amount_high,
-                    owner, comment, source_url, raw_json
-                ) VALUES (
-                    :source, :politician_name, :politician_party, :politician_state,
-                    :politician_chamber, :ticker, :asset_description, :transaction_type,
-                    :transaction_date, :filing_date, :amount_range, :amount_low, :amount_high,
-                    :owner, :comment, :source_url, :raw_json
-                )
-            """, trade)
-            return cur.lastrowid if cur.rowcount > 0 else None
+            return self._insert_raw_trade(conn, trade)
 
-    def get_unscored_trades(self) -> List[Dict]:
+    def insert_raw_trades(self, trades: List[Dict[str, Any]]) -> tuple[int, int]:
+        """Insert raw trades in one transaction. Returns (new_count, duplicate_count)."""
+        new_count = 0
+        dupe_count = 0
         with self.connection() as conn:
-            rows = conn.execute("""
+            for trade in trades:
+                if self._insert_raw_trade(conn, trade) is not None:
+                    new_count += 1
+                else:
+                    dupe_count += 1
+        return new_count, dupe_count
+
+    def get_unscored_trades(self, senate_max_age_days: Optional[int] = None) -> List[Dict]:
+        params = []
+        senate_age_filter = ""
+        if senate_max_age_days and senate_max_age_days > 0:
+            senate_age_filter = """
+                  AND (
+                      rt.source != 'senate_watcher'
+                      OR COALESCE(rt.filing_date, rt.transaction_date) >= date('now', ?)
+                  )
+            """
+            params.append(f"-{senate_max_age_days} days")
+
+        with self.connection() as conn:
+            rows = conn.execute(f"""
                 SELECT rt.* FROM raw_trades rt
                 LEFT JOIN signals s ON s.raw_trade_id = rt.id
                 WHERE s.id IS NULL
                   AND rt.ticker IS NOT NULL
                   AND rt.ticker != '--'
                   AND rt.ticker != ''
+                  {senate_age_filter}
                 ORDER BY rt.transaction_date DESC
-            """).fetchall()
+            """, params).fetchall()
             return [dict(r) for r in rows]
 
     def get_recent_trades(self, days: int = 30) -> List[Dict]:

@@ -45,7 +45,9 @@ class ScoringEngine:
         The model first scores the full batch, then ranks BUY candidates
         cross-sectionally by expected return and calibrated confidence.
         """
-        unscored = self.db.get_unscored_trades()
+        unscored = self.db.get_unscored_trades(
+            senate_max_age_days=self.config.data_sources.senate_watcher_max_age_days
+        )
         logger.info("Scoring %s unscored trades", len(unscored))
 
         scored = [self.model.score_trade(trade) for trade in unscored]

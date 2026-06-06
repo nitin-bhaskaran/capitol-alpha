@@ -91,6 +91,8 @@ class DataSourceConfig:
         "https://raw.githubusercontent.com/timothycarambat/"
         "senate-stock-watcher-data/master/aggregate/all_transactions.json"
     )
+    senate_watcher_max_age_days: int = 120
+    senate_watcher_max_records: int = 500
     quiver_api_token: str = ""
     finnhub_api_token: str = ""
     poll_interval_minutes: int = 30

@@ -4,7 +4,8 @@ Coordinates ingestion from all sources and deduplicates into the database.
 """
 
 import logging
-from typing import List, Dict, Any
+from datetime import date, datetime, timedelta
+from typing import List, Dict, Any, Optional
 
 from src.database import Database
 from src.config import Config
@@ -57,6 +58,7 @@ class DataPipeline:
             senate_trades = fetch_senate_trades(
                 self.config.data_sources.senate_watcher_url
             )
+            senate_trades = self._limit_senate_live_trades(senate_trades)
             new, dupes = self._ingest_trades(senate_trades)
             summary["senate_watcher"] = new
             summary["total_new"] += new
@@ -96,14 +98,64 @@ class DataPipeline:
 
     def _ingest_trades(self, trades: List[Dict[str, Any]]) -> tuple:
         """Ingest a list of trades. Returns (new_count, duplicate_count)."""
-        new_count = 0
-        dupe_count = 0
+        if not trades:
+            return 0, 0
+        return self.db.insert_raw_trades(trades)
 
-        for trade in trades:
-            row_id = self.db.insert_raw_trade(trade)
-            if row_id is not None:
-                new_count += 1
-            else:
-                dupe_count += 1
+    def _limit_senate_live_trades(self, trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Keep the live alert path focused on recent Senate disclosures."""
+        original_count = len(trades)
+        max_age_days = self.config.data_sources.senate_watcher_max_age_days
+        max_records = self.config.data_sources.senate_watcher_max_records
 
-        return new_count, dupe_count
+        if max_age_days and max_age_days > 0:
+            cutoff = date.today() - timedelta(days=max_age_days)
+            recent = []
+            missing_date_count = 0
+            stale_count = 0
+
+            for trade in trades:
+                trade_date = self._best_trade_date(trade)
+                if trade_date is None:
+                    missing_date_count += 1
+                    continue
+                if trade_date >= cutoff:
+                    recent.append(trade)
+                else:
+                    stale_count += 1
+
+            trades = recent
+            logger.info(
+                "Senate Watcher live filter: %s parsed, %s recent, %s stale, "
+                "%s missing date (max_age_days=%s)",
+                original_count,
+                len(trades),
+                stale_count,
+                missing_date_count,
+                max_age_days,
+            )
+
+        trades = sorted(
+            trades,
+            key=lambda trade: self._best_trade_date(trade) or date.min,
+            reverse=True,
+        )
+
+        if max_records and max_records > 0 and len(trades) > max_records:
+            logger.info(
+                "Senate Watcher live cap: keeping %s of %s recent rows",
+                max_records,
+                len(trades),
+            )
+            trades = trades[:max_records]
+
+        return trades
+
+    def _best_trade_date(self, trade: Dict[str, Any]) -> Optional[date]:
+        raw_date = trade.get("filing_date") or trade.get("transaction_date")
+        if not raw_date:
+            return None
+        try:
+            return datetime.strptime(raw_date, "%Y-%m-%d").date()
+        except ValueError:
+            return None

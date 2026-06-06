@@ -2,12 +2,14 @@ import asyncio
 import tempfile
 import unittest
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 from src.alerts.telegram_bot import TelegramBot
 from src.config import Config
 from src.data import house_watcher, senate_watcher
+from src.data.pipeline import DataPipeline
 from src.database import Database
 from src.execution.paper import PaperTradingService
 from src.execution.quotes import MarketQuoteService
@@ -263,6 +265,64 @@ class QuantMvpTests(unittest.TestCase):
         self.assertEqual(len(trades), 1)
         self.assertEqual(trades[0]["ticker"], "NVDA")
         self.assertEqual(trades[0]["politician_chamber"], "Senate")
+
+    def test_senate_live_filter_keeps_recent_rows_and_caps(self):
+        config = Config()
+        config.data_sources.senate_watcher_max_age_days = 30
+        config.data_sources.senate_watcher_max_records = 1
+        pipeline = DataPipeline(db=None, config=config)
+        older = sample_trade()
+        older.update({
+            "source": "senate_watcher",
+            "ticker": "OLD",
+            "transaction_date": "2020-01-01",
+            "filing_date": "2020-01-01",
+        })
+        recent = sample_trade()
+        recent.update({
+            "source": "senate_watcher",
+            "ticker": "NEW",
+            "transaction_date": (date.today() - timedelta(days=2)).isoformat(),
+            "filing_date": (date.today() - timedelta(days=2)).isoformat(),
+        })
+        newest = sample_trade()
+        newest.update({
+            "source": "senate_watcher",
+            "ticker": "NEWEST",
+            "transaction_date": date.today().isoformat(),
+            "filing_date": date.today().isoformat(),
+        })
+
+        filtered = pipeline._limit_senate_live_trades([older, recent, newest])
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["ticker"], "NEWEST")
+
+    def test_batch_raw_trade_insert_counts_duplicates(self):
+        db = self.make_db()
+        first = sample_trade()
+        duplicate = sample_trade()
+
+        new_count, dupe_count = db.insert_raw_trades([first, duplicate])
+
+        self.assertEqual(new_count, 1)
+        self.assertEqual(dupe_count, 1)
+
+    def test_scoring_ignores_stale_senate_backlog(self):
+        db = self.make_db()
+        config = Config()
+        config.data_sources.senate_watcher_max_age_days = 30
+        trade = sample_trade()
+        trade.update({
+            "source": "senate_watcher",
+            "transaction_date": "2020-01-01",
+            "filing_date": "2020-01-01",
+        })
+        db.insert_raw_trade(trade)
+
+        signals = ScoringEngine(db, config).score_unscored_trades()
+
+        self.assertEqual(signals, [])
 
     def test_scoring_persists_signal_and_feature_snapshot(self):
         db = self.make_db()

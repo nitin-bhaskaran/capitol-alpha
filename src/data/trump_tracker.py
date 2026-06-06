@@ -16,10 +16,18 @@ This module provides:
 
 import json
 import logging
-import requests
 from datetime import datetime
-from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional
+
+try:
+    import requests
+except ModuleNotFoundError:
+    requests = None
+
+try:
+    from bs4 import BeautifulSoup
+except ModuleNotFoundError:
+    BeautifulSoup = None
 
 from src.utils.helpers import (
     parse_amount_range,
@@ -54,6 +62,10 @@ def fetch_trump_trades_from_news() -> List[Dict[str, Any]]:
     This is inherently less structured than congressional data,
     so we cast a wide net and filter aggressively.
     """
+    if requests is None or BeautifulSoup is None:
+        logger.warning("requests/beautifulsoup4 not installed - skipping Trump tracker")
+        return []
+
     logger.info("Checking for Trump family trade disclosures...")
     trades = []
 

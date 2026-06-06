@@ -54,6 +54,8 @@ data_sources:
   # House Stock Watcher S3 is retired/403; Capitol Trades provides House coverage.
   house_watcher_url: ""
   senate_watcher_url: "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json"
+  senate_watcher_max_age_days: 120
+  senate_watcher_max_records: 500
   poll_interval_minutes: 30
   capitol_trades_enabled: true
   quiver_api_token: ""

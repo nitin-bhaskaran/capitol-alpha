@@ -140,3 +140,5 @@ API keys belong only in local config files and should not be committed.
 ## Source Health
 
 The historical House Stock Watcher S3 feed now returns 403, so the default config leaves `house_watcher_url` blank and relies on Capitol Trades for House disclosure coverage. Senate Stock Watcher uses the GitHub raw aggregate mirror.
+
+For the live alert loop, Senate rows are filtered to recent disclosures and capped by `senate_watcher_max_age_days` and `senate_watcher_max_records`. This keeps a historical mirror from blocking current Capitol Trades alerts; full historical ingestion should be handled as a research/backfill workflow.
