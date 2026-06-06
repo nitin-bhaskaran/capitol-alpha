@@ -1,13 +1,16 @@
+import asyncio
 import tempfile
 import unittest
 import logging
 from pathlib import Path
+from unittest.mock import patch
 
 from src.alerts.telegram_bot import TelegramBot
 from src.config import Config
 from src.database import Database
 from src.execution.paper import PaperTradingService
 from src.execution.quotes import MarketQuoteService
+from src.main import CapitolAlpha
 from src.scoring.engine import ScoringEngine
 from src.scoring.features import build_event_features
 from src.scoring.model import EventAlphaEnsemble
@@ -106,6 +109,40 @@ class FakeQuoteSession:
 class FakePaper:
     def execute_signal(self, signal_id):
         return {"ok": True, "order_id": 7, "status": "filled"}
+
+
+class FakeLifecycleBot:
+    def __init__(self):
+        self.started = False
+        self.stopped = False
+
+    async def start(self):
+        self.started = True
+
+    async def stop(self):
+        self.stopped = True
+
+
+class FakeScheduler:
+    def __init__(self):
+        self.running = False
+        self.jobs = []
+        self.shutdown_called = False
+
+    def add_job(self, *args, **kwargs):
+        self.jobs.append((args, kwargs))
+
+    def start(self):
+        self.running = True
+
+    def shutdown(self, wait=True):
+        self.shutdown_called = True
+        self.running = False
+
+
+class FakeDashboard:
+    def run(self, *args, **kwargs):
+        return None
 
 
 class FakeQuery:
@@ -307,6 +344,30 @@ class TelegramExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("EXECUTION RECORDED", query.edited)
         self.assertIn("Ledger order id: 7", query.edited)
+
+
+class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_run_handles_cancelled_sleep_as_clean_shutdown(self):
+        app = object.__new__(CapitolAlpha)
+        app.config = Config()
+        app.t212 = None
+        app.bot = FakeLifecycleBot()
+        app.scheduler = FakeScheduler()
+        app.db = Database(Path(tempfile.mkdtemp()) / "test.db")
+
+        async def cancel_sleep(_seconds):
+            raise asyncio.CancelledError()
+
+        with (
+            patch("src.main.setup_logging"),
+            patch("src.main.create_dashboard_app", return_value=FakeDashboard()),
+            patch("src.main.asyncio.sleep", cancel_sleep),
+        ):
+            await app.run()
+
+        self.assertTrue(app.bot.started)
+        self.assertTrue(app.bot.stopped)
+        self.assertTrue(app.scheduler.shutdown_called)
 
 
 if __name__ == "__main__":

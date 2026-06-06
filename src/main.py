@@ -18,17 +18,28 @@ import logging
 import threading
 from datetime import datetime
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+except ModuleNotFoundError:
+    AsyncIOScheduler = None
 
 from src.alerts.telegram_bot import TelegramBot
 from src.config import load_config
-from src.dashboard.app import create_dashboard_app
-from src.data.pipeline import DataPipeline
 from src.database import Database
 from src.execution.paper import PaperTradingService
 from src.execution.trading212 import Trading212Client
 from src.scoring.engine import ScoringEngine
 from src.utils.helpers import setup_logging
+
+try:
+    from src.data.pipeline import DataPipeline
+except ModuleNotFoundError:
+    DataPipeline = None
+
+try:
+    from src.dashboard.app import create_dashboard_app
+except ModuleNotFoundError:
+    create_dashboard_app = None
 
 logger = logging.getLogger("capitol_alpha")
 
@@ -37,6 +48,11 @@ class CapitolAlpha:
     """Main application orchestrator."""
 
     def __init__(self):
+        if AsyncIOScheduler is None:
+            raise RuntimeError("apscheduler is required. Run: pip install -r requirements.txt")
+        if DataPipeline is None:
+            raise RuntimeError("data ingestion dependencies are required. Run: pip install -r requirements.txt")
+
         self.config = load_config()
         self.db = Database()
         self.pipeline = DataPipeline(self.db, self.config)
@@ -118,6 +134,8 @@ class CapitolAlpha:
         self.scheduler.start()
 
         try:
+            if create_dashboard_app is None:
+                raise RuntimeError("Flask is not installed")
             dashboard = create_dashboard_app(self.db, self.config)
             dash_thread = threading.Thread(
                 target=lambda: dashboard.run(
@@ -135,16 +153,36 @@ class CapitolAlpha:
         try:
             while True:
                 await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            logger.info("Shutdown requested")
         except (KeyboardInterrupt, SystemExit):
-            logger.info("Shutting down...")
-            self.scheduler.shutdown()
+            logger.info("Shutdown requested")
+        finally:
+            await self.shutdown()
+
+    async def shutdown(self):
+        """Stop background services without surfacing Ctrl+C tracebacks."""
+        logger.info("Shutting down...")
+        try:
+            if getattr(self.scheduler, "running", False):
+                self.scheduler.shutdown(wait=False)
+        except Exception as e:
+            logger.warning("Scheduler shutdown failed: %s", e)
+
+        try:
             await self.bot.stop()
-            logger.info("Capitol Alpha stopped.")
+        except Exception as e:
+            logger.warning("Telegram shutdown failed: %s", e)
+
+        logger.info("Capitol Alpha stopped.")
 
 
 def main():
     app = CapitolAlpha()
-    asyncio.run(app.run())
+    try:
+        asyncio.run(app.run())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
