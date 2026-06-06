@@ -78,6 +78,12 @@ python -m src.research report
 
 The expected price CSV columns are `ticker,date,close` with optional `benchmark_close`.
 
+## Quote Sizing
+
+Trading212 market orders are quantity-based, so broker-backed paper/live modes fetch a market price before calculating order quantity from `max_order_gbp_*`.
+
+Quote lookup uses `data_sources.finnhub_api_token` when configured, then a no-key Yahoo chart fallback, with FX conversion to GBP through Frankfurter. If the app cannot obtain a GBP price estimate, it records a rejected ledger order instead of sending an uncapped quantity order.
+
 ## Model Stack
 
 The scoring layer is an event-alpha ensemble:

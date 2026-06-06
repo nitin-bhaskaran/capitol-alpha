@@ -6,6 +6,7 @@ from src.alerts.telegram_bot import TelegramBot
 from src.config import Config
 from src.database import Database
 from src.execution.paper import PaperTradingService
+from src.execution.quotes import MarketQuoteService
 from src.scoring.engine import ScoringEngine
 from src.scoring.features import build_event_features
 from src.scoring.model import EventAlphaEnsemble
@@ -34,8 +35,7 @@ def sample_trade():
 
 
 class FakeT212:
-    def __init__(self, price=250.0, filled_value=None, min_trade_quantity=0.1):
-        self.price = price
+    def __init__(self, filled_value=None, min_trade_quantity=0.1):
         self.filled_value = filled_value
         self.min_trade_quantity = min_trade_quantity
         self.orders = []
@@ -44,7 +44,7 @@ class FakeT212:
         return {
             "ticker": f"{ticker}_US_EQ",
             "minTradeQuantity": self.min_trade_quantity,
-            "currentPrice": self.price,
+            "currencyCode": "USD",
         }
 
     def place_market_order(self, t212_ticker, quantity, extended_hours=False):
@@ -54,13 +54,51 @@ class FakeT212:
             "status": "FILLED",
             "ticker": t212_ticker,
             "filledQuantity": quantity,
-            "filledValue": self.filled_value if self.filled_value is not None else quantity * self.price,
+            "filledValue": self.filled_value if self.filled_value is not None else quantity * 250.0,
         }
 
 
-class FakeT212WithoutPrice(FakeT212):
-    def find_instrument(self, ticker):
-        return {"ticker": f"{ticker}_US_EQ", "minTradeQuantity": self.min_trade_quantity}
+class FakeQuote:
+    def __init__(self, price_gbp=250.0):
+        self.price_gbp = price_gbp
+        self.requests = []
+
+    def get_unit_price_gbp(self, ticker, instrument=None):
+        self.requests.append({"ticker": ticker, "instrument": instrument})
+        return self.price_gbp
+
+
+class FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+class FakeQuoteSession:
+    def __init__(self):
+        self.calls = []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append({"url": url, "params": params, "timeout": timeout})
+        if "query1.finance.yahoo.com" in url:
+            return FakeResponse({
+                "chart": {
+                    "result": [{
+                        "meta": {
+                            "regularMarketPrice": 100.0,
+                            "currency": "USD",
+                        }
+                    }]
+                }
+            })
+        if "api.frankfurter.app" in url:
+            return FakeResponse({"rates": {"GBP": 0.8}})
+        return FakeResponse({})
 
 
 class FakePaper:
@@ -105,6 +143,15 @@ class QuantMvpTests(unittest.TestCase):
         self.assertLessEqual(result["confidence"], 1)
         self.assertIn("_features", result)
 
+    def test_quote_service_fetches_market_price_and_converts_to_gbp(self):
+        session = FakeQuoteSession()
+        service = MarketQuoteService(Config(), session=session)
+
+        price = service.get_unit_price_gbp("NVDA", {"currencyCode": "USD"})
+
+        self.assertAlmostEqual(price, 80.0)
+        self.assertEqual(len(session.calls), 2)
+
     def test_scoring_persists_signal_and_feature_snapshot(self):
         db = self.make_db()
         config = Config()
@@ -127,7 +174,8 @@ class QuantMvpTests(unittest.TestCase):
         db.insert_raw_trade(sample_trade())
         signal = ScoringEngine(db, config).score_unscored_trades()[0]
 
-        result = PaperTradingService(db, config, FakeT212()).execute_signal(signal["id"])
+        quote = FakeQuote(price_gbp=250.0)
+        result = PaperTradingService(db, config, FakeT212(), quote).execute_signal(signal["id"])
 
         self.assertTrue(result["ok"])
         orders = db.get_recent_paper_orders()
@@ -135,6 +183,7 @@ class QuantMvpTests(unittest.TestCase):
         self.assertEqual(len(orders), 1)
         self.assertEqual(orders[0]["status"], "filled")
         self.assertLessEqual(orders[0]["quantity"] * orders[0]["estimated_price"], config.execution.max_order_gbp_demo)
+        self.assertEqual(quote.requests[0]["ticker"], "NVDA")
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0]["ticker"], "NVDA")
 
@@ -145,7 +194,12 @@ class QuantMvpTests(unittest.TestCase):
         db.insert_raw_trade(sample_trade())
         signal = ScoringEngine(db, config).score_unscored_trades()[0]
 
-        result = PaperTradingService(db, config, FakeT212(price=250.0, filled_value=90.0)).execute_signal(signal["id"])
+        result = PaperTradingService(
+            db,
+            config,
+            FakeT212(filled_value=90.0),
+            FakeQuote(price_gbp=250.0),
+        ).execute_signal(signal["id"])
 
         self.assertTrue(result["ok"])
         position = db.get_paper_positions()[0]
@@ -156,11 +210,11 @@ class QuantMvpTests(unittest.TestCase):
         db = self.make_db()
         config = Config()
         config.execution.mode = "t212_demo"
-        broker = FakeT212WithoutPrice()
+        broker = FakeT212()
         db.insert_raw_trade(sample_trade())
         signal = ScoringEngine(db, config).score_unscored_trades()[0]
 
-        result = PaperTradingService(db, config, broker).execute_signal(signal["id"])
+        result = PaperTradingService(db, config, broker, FakeQuote(price_gbp=None)).execute_signal(signal["id"])
 
         self.assertFalse(result["ok"])
         self.assertIn("Cannot enforce notional cap", result["reason"])
@@ -171,11 +225,11 @@ class QuantMvpTests(unittest.TestCase):
         config = Config()
         config.execution.mode = "t212_demo"
         config.execution.max_order_gbp_demo = 100.0
-        broker = FakeT212(price=2000.0, min_trade_quantity=0.1)
+        broker = FakeT212(min_trade_quantity=0.1)
         db.insert_raw_trade(sample_trade())
         signal = ScoringEngine(db, config).score_unscored_trades()[0]
 
-        result = PaperTradingService(db, config, broker).execute_signal(signal["id"])
+        result = PaperTradingService(db, config, broker, FakeQuote(price_gbp=2000.0)).execute_signal(signal["id"])
 
         self.assertFalse(result["ok"])
         self.assertIn("Minimum broker quantity", result["reason"])
@@ -187,7 +241,7 @@ class QuantMvpTests(unittest.TestCase):
         config.execution.mode = "t212_demo"
         db.insert_raw_trade(sample_trade())
         signal = ScoringEngine(db, config).score_unscored_trades()[0]
-        service = PaperTradingService(db, config, FakeT212())
+        service = PaperTradingService(db, config, FakeT212(), FakeQuote(price_gbp=250.0))
 
         first = service.execute_signal(signal["id"])
         second = service.execute_signal(signal["id"])

@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from src.config import Config
 from src.database import Database
+from src.execution.quotes import MarketQuoteService
 from src.execution.trading212 import Trading212Client
 from src.scoring.features import SECTOR_BY_TICKER
 
@@ -68,10 +69,12 @@ class PaperTradingService:
         db: Database,
         config: Config,
         t212: Optional[Trading212Client] = None,
+        quote_service: Optional[MarketQuoteService] = None,
     ):
         self.db = db
         self.config = config
         self.t212 = t212
+        self.quote_service = quote_service or MarketQuoteService(config)
         self.risk = RiskGate(db, config)
 
     def execute_signal(self, signal_id: int) -> Dict[str, Any]:
@@ -343,6 +346,10 @@ class PaperTradingService:
         signal: Dict[str, Any],
         instrument: Dict[str, Any],
     ) -> Optional[float]:
+        price = self.quote_service.get_unit_price_gbp(signal["ticker"], instrument)
+        if price and price > 0:
+            return price
+
         price = self._first_float(
             instrument,
             (

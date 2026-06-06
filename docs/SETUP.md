@@ -106,6 +106,12 @@ AAPL,2026-06-01,195.00,5200.00
 
 `benchmark_close` is optional. If absent, the report records raw forward returns as excess returns.
 
+## Quote Sizing
+
+Trading212 orders are submitted by quantity, while the risk config is expressed in GBP notional caps. Before sending a Trading212 demo/live market order, Capitol Alpha fetches a quote, converts it to GBP if needed, and sizes the quantity so it stays under `execution.max_order_gbp_demo` or `execution.max_order_gbp_live`.
+
+Set `data_sources.finnhub_api_token` for the preferred quote path. If it is blank, the app tries a no-key Yahoo chart fallback and Frankfurter FX conversion. If no quote is available, the ledger records a rejection and no broker order is sent.
+
 ## Validation Gates
 
 Live Trading212 execution remains blocked until a validation report confirms all gates:
