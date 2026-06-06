@@ -1,21 +1,45 @@
-# Capitol Alpha — Configuration
+# Capitol Alpha configuration.
 # Copy this file to config.yaml and fill in your API keys.
-# NEVER commit config.yaml to git (it's in .gitignore).
+# NEVER commit config.yaml to git.
 
 telegram:
-  bot_token: "YOUR_BOT_TOKEN_HERE"
-  chat_id: "YOUR_CHAT_ID_HERE"
-  admin_user_ids:
-    - 123456789
+  bot_token: ""
+  chat_id: ""
+  admin_user_ids: []
 
 trading212:
-  api_key: "YOUR_T212_API_KEY"
-  api_secret: "YOUR_T212_API_SECRET"
-  environment: "demo"    # START WITH DEMO!
+  api_key: ""
+  api_secret: ""
+  environment: "demo"
   max_order_gbp: 500.0
   max_daily_orders: 5
-  default_order_type: "limit"
+  default_order_type: "market"
   limit_offset_pct: 0.5
+
+execution:
+  mode: "t212_demo"          # disabled | local_paper | t212_demo | t212_live
+  live_enabled: false        # Must remain false until validation gates pass.
+  max_order_gbp_demo: 100.0
+  max_order_gbp_live: 50.0
+  default_demo_quantity: 0.1 # Trading212 API places orders by quantity.
+  default_order_type: "market"
+  validation_days_required: 10
+  allow_fractional_shares: true
+
+risk:
+  max_positions: 8
+  max_single_name_exposure_pct: 10.0
+  max_sector_exposure_pct: 30.0
+  max_daily_loss_pct: 3.0
+  fractional_kelly: 0.25
+  starting_equity_gbp: 10000.0
+
+model:
+  active_model_path: "models/event_alpha_model.json"
+  min_trade_confidence: 0.58
+  min_expected_excess_return: 0.015
+  min_alert_confidence: 0.48
+  default_model_version: "event-alpha-ensemble-v0"
 
 scoring:
   vip_weight: 0.30

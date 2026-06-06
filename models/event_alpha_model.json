@@ -1,0 +1,95 @@
+{
+  "calibration": {
+    "intercept": 0.0,
+    "slope": 1.0
+  },
+  "group_stats": {
+    "global": {
+      "mean_excess_return": 0.004,
+      "n": 30,
+      "win_rate": 0.52
+    },
+    "politician": {
+      "dan crenshaw": {
+        "mean_excess_return": 0.006,
+        "n": 6,
+        "win_rate": 0.54
+      },
+      "nancy pelosi": {
+        "mean_excess_return": 0.01,
+        "n": 10,
+        "win_rate": 0.57
+      },
+      "tommy tuberville": {
+        "mean_excess_return": 0.004,
+        "n": 6,
+        "win_rate": 0.52
+      }
+    },
+    "sector": {
+      "defense": {
+        "mean_excess_return": 0.006,
+        "n": 10,
+        "win_rate": 0.54
+      },
+      "energy": {
+        "mean_excess_return": 0.003,
+        "n": 8,
+        "win_rate": 0.51
+      },
+      "financials": {
+        "mean_excess_return": 0.004,
+        "n": 8,
+        "win_rate": 0.52
+      },
+      "healthcare": {
+        "mean_excess_return": 0.004,
+        "n": 8,
+        "win_rate": 0.52
+      },
+      "semiconductors": {
+        "mean_excess_return": 0.008,
+        "n": 8,
+        "win_rate": 0.55
+      },
+      "technology": {
+        "mean_excess_return": 0.006,
+        "n": 12,
+        "win_rate": 0.54
+      },
+      "unknown": {
+        "mean_excess_return": 0.001,
+        "n": 2,
+        "win_rate": 0.5
+      }
+    },
+    "source": {
+      "capitol_trades": {
+        "mean_excess_return": 0.003,
+        "n": 8,
+        "win_rate": 0.51
+      },
+      "house_watcher": {
+        "mean_excess_return": 0.005,
+        "n": 12,
+        "win_rate": 0.53
+      },
+      "senate_watcher": {
+        "mean_excess_return": 0.005,
+        "n": 12,
+        "win_rate": 0.53
+      },
+      "trump_tracker": {
+        "mean_excess_return": 0.0,
+        "n": 2,
+        "win_rate": 0.5
+      }
+    }
+  },
+  "metadata": {
+    "calibration_ok": false,
+    "source": "default_priors_until_paper_outcomes_exist",
+    "training_rows": 0
+  },
+  "model_version": "event-alpha-ensemble-v0"
+}

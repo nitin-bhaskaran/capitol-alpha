@@ -1,12 +1,13 @@
-"""
-Configuration loader for Capitol Alpha.
-Reads config.yaml and provides typed dataclass access.
-"""
+"""Configuration loader for Capitol Alpha."""
 
-import yaml
-from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, List
+from pathlib import Path
+from typing import List, Optional
+
+try:
+    import yaml
+except ModuleNotFoundError:
+    yaml = None
 
 PROJECT_ROOT = Path(__file__).parent.parent
 CONFIG_FILE = PROJECT_ROOT / "config" / "config.yaml"
@@ -29,7 +30,7 @@ class Trading212Config:
     base_url: str = ""
     max_order_gbp: float = 500.0
     max_daily_orders: int = 5
-    default_order_type: str = "limit"
+    default_order_type: str = "market"
     limit_offset_pct: float = 0.5
 
     def __post_init__(self):
@@ -39,6 +40,37 @@ class Trading212Config:
                 if self.environment == "live"
                 else "https://demo.trading212.com"
             )
+
+
+@dataclass
+class ExecutionConfig:
+    mode: str = "t212_demo"
+    live_enabled: bool = False
+    max_order_gbp_demo: float = 100.0
+    max_order_gbp_live: float = 50.0
+    default_demo_quantity: float = 0.1
+    default_order_type: str = "market"
+    validation_days_required: int = 10
+    allow_fractional_shares: bool = True
+
+
+@dataclass
+class RiskConfig:
+    max_positions: int = 8
+    max_single_name_exposure_pct: float = 10.0
+    max_sector_exposure_pct: float = 30.0
+    max_daily_loss_pct: float = 3.0
+    fractional_kelly: float = 0.25
+    starting_equity_gbp: float = 10_000.0
+
+
+@dataclass
+class ModelConfig:
+    active_model_path: str = "models/event_alpha_model.json"
+    min_trade_confidence: float = 0.58
+    min_expected_excess_return: float = 0.015
+    min_alert_confidence: float = 0.48
+    default_model_version: str = "event-alpha-ensemble-v0"
 
 
 @dataclass
@@ -54,8 +86,14 @@ class ScoringConfig:
 
 @dataclass
 class DataSourceConfig:
-    house_watcher_url: str = "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
-    senate_watcher_url: str = "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json"
+    house_watcher_url: str = (
+        "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com"
+        "/data/all_transactions.json"
+    )
+    senate_watcher_url: str = (
+        "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com"
+        "/aggregate/all_transactions.json"
+    )
     quiver_api_token: str = ""
     finnhub_api_token: str = ""
     poll_interval_minutes: int = 30
@@ -85,25 +123,33 @@ class VIPWatchlist:
 class Config:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     trading212: Trading212Config = field(default_factory=Trading212Config)
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    risk: RiskConfig = field(default_factory=RiskConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
     data_sources: DataSourceConfig = field(default_factory=DataSourceConfig)
     vip_watchlist: VIPWatchlist = field(default_factory=VIPWatchlist)
+
+
+def _dataclass_kwargs(cls, raw: dict) -> dict:
+    return {k: raw[k] for k in raw if k in cls.__dataclass_fields__}
 
 
 def load_config(config_path: Optional[Path] = None) -> Config:
     """Load configuration from YAML file."""
     path = config_path or CONFIG_FILE
     if not path.exists():
-        print(f"[WARNING] Config not found at {path} — using defaults.")
-        print(f"  Copy config/config_template.yaml to config/config.yaml")
+        print(f"[WARNING] Config not found at {path} - using defaults.")
+        print("  Copy config/config_template.yaml to config/config.yaml")
         return Config()
+    if yaml is None:
+        raise RuntimeError("PyYAML is required to read config/config.yaml")
 
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     config = Config()
 
-    # Telegram
     tg = raw.get("telegram", {})
     config.telegram = TelegramConfig(
         bot_token=tg.get("bot_token", ""),
@@ -111,38 +157,39 @@ def load_config(config_path: Optional[Path] = None) -> Config:
         admin_user_ids=tg.get("admin_user_ids", []),
     )
 
-    # Trading212
     t = raw.get("trading212", {})
     config.trading212 = Trading212Config(
         api_key=t.get("api_key", ""),
         api_secret=t.get("api_secret", ""),
         environment=t.get("environment", "demo"),
+        base_url=t.get("base_url", ""),
         max_order_gbp=t.get("max_order_gbp", 500.0),
         max_daily_orders=t.get("max_daily_orders", 5),
-        default_order_type=t.get("default_order_type", "limit"),
+        default_order_type=t.get("default_order_type", "market"),
         limit_offset_pct=t.get("limit_offset_pct", 0.5),
     )
 
-    # Scoring
-    sc = raw.get("scoring", {})
+    config.execution = ExecutionConfig(
+        **_dataclass_kwargs(ExecutionConfig, raw.get("execution", {}))
+    )
+    config.risk = RiskConfig(**_dataclass_kwargs(RiskConfig, raw.get("risk", {})))
+    config.model = ModelConfig(**_dataclass_kwargs(ModelConfig, raw.get("model", {})))
     config.scoring = ScoringConfig(
-        **{k: sc[k] for k in sc if hasattr(ScoringConfig, k)}
+        **_dataclass_kwargs(ScoringConfig, raw.get("scoring", {}))
     )
-
-    # Data sources
-    ds = raw.get("data_sources", {})
     config.data_sources = DataSourceConfig(
-        **{k: ds[k] for k in ds if hasattr(DataSourceConfig, k)}
+        **_dataclass_kwargs(DataSourceConfig, raw.get("data_sources", {}))
     )
 
-    # VIP Watchlist
     vip = raw.get("vip_watchlist", {})
     if vip:
         defaults = VIPWatchlist()
         config.vip_watchlist = VIPWatchlist(
             tier1_politicians=vip.get("tier1_politicians", defaults.tier1_politicians),
             tier2_politicians=vip.get("tier2_politicians", defaults.tier2_politicians),
-            high_signal_committees=vip.get("high_signal_committees", defaults.high_signal_committees),
+            high_signal_committees=vip.get(
+                "high_signal_committees", defaults.high_signal_committees
+            ),
         )
 
     return config

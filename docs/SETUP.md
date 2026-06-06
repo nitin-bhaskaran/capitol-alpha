@@ -1,101 +1,149 @@
-# Capitol Alpha — Raspberry Pi Setup Guide
+# Capitol Alpha Setup Guide
 
-Step-by-step instructions to deploy Capitol Alpha on a Raspberry Pi
-as an always-on service.
+This guide covers the local-first MVP: run Capitol Alpha on this machine, start Trading212 demo or local paper trading, collect outcomes, and only consider live trading after validation gates pass.
 
 ## Prerequisites
 
-- Raspberry Pi 4 or 5 (2GB+ RAM)
-- Raspberry Pi OS (64-bit recommended)
-- Internet connection
 - Python 3.11+
+- Internet access for disclosure ingestion and Trading212 demo execution
+- Optional Telegram bot credentials for alerts and approve/execute callbacks
+- Optional Trading212 demo API key for broker-backed paper trading
 
-## Step 1: Clone the Repository
+## Local Setup
 
-```bash
-cd ~
-git clone https://github.com/nitin-bhaskaran/capitol-alpha.git
-cd capitol-alpha
+From the repository root:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item config\config_template.yaml config\config.yaml
 ```
 
-## Step 2: Set Up Python Environment
+On Linux or Raspberry Pi:
 
 ```bash
-# Install Python venv if not already present
-sudo apt update
-sudo apt install python3-venv python3-pip -y
-
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
-```
-
-## Step 3: Configure API Keys
-
-```bash
-# Copy the template
 cp config/config_template.yaml config/config.yaml
-
-# Edit with your keys
-nano config/config.yaml
 ```
 
-You need to fill in:
+Edit `config/config.yaml` and set:
 
-### Telegram Bot Token
-1. Open Telegram, search for `@BotFather`
-2. Send `/newbot`
-3. Follow the prompts — name it something like "Capitol Alpha Bot"
-4. Copy the token into `bot_token`
-5. Search for `@userinfobot`, send `/start` — it will reply with your chat ID
-6. Copy your chat ID into `chat_id` and `admin_user_ids`
+```yaml
+execution:
+  mode: "t212_demo"
+  live_enabled: false
+```
 
-### Trading212 API Keys
-1. Open the Trading212 app
-2. Go to Settings > API (beta)
-3. Click "Generate API Key"
-4. Name: `capitol-alpha`
-5. Permissions: enable "Account data", "Orders", "Portfolio"
-6. IP restriction: either unrestricted or your Pi's public IP
-7. Copy the API Key and API Secret into config
-8. **IMPORTANT**: Set `environment: "demo"` until you trust the system!
+Use `local_paper` if you want to validate without sending orders to Trading212 demo.
 
-## Step 4: Test Run
+## Trading212 Demo
+
+Create an API key from the Trading212 app and keep it in your local config. Use the demo environment first.
+
+The app supports these execution modes:
+
+- `disabled`: no execution.
+- `local_paper`: simulated local ledger fills.
+- `t212_demo`: Trading212 demo orders plus local ledger.
+- `t212_live`: live orders, locked by validation gates.
+
+Do not set `execution.live_enabled: true` until the validation report says live is ready and you have manually reviewed the ledger.
+
+## Telegram
+
+Telegram is optional but useful for reviewing signals.
+
+1. Create a bot with `@BotFather`.
+2. Add `bot_token`, `chat_id`, and `admin_user_ids` to `config/config.yaml`.
+3. Start the app with `python -m src.main`.
+
+The `EXECUTE NOW` button now routes through the paper/demo execution layer. It will not place live orders unless live mode is explicitly configured and unlocked.
+
+## Running The App
 
 ```bash
-# Activate venv
-source .venv/bin/activate
-
-# Run once to test
 python -m src.main
 ```
 
-You should see:
-- Log messages about fetching House/Senate data
-- New trades being ingested
-- Signals being scored
-- Telegram alerts being sent (if configured)
-- Dashboard available at http://<your-pi-ip>:5055
+Expected behavior:
 
-Press Ctrl+C to stop.
+- Disclosure feeds are ingested.
+- Features are generated and hashed.
+- Signals are ranked by the event-alpha model.
+- Risk gates decide whether a signal is tradeable.
+- Demo/local paper orders are written to the local ledger.
+- Dashboard is available at `http://localhost:5055`.
 
-## Step 5: Set Up as a systemd Service
+## Research Workflow
 
-This ensures Capitol Alpha starts automatically on boot and restarts on crash.
+Backfill outcomes from local prices:
 
 ```bash
-# Create the service file
-sudo nano /etc/systemd/system/capitol-alpha.service
+python -m src.research backfill-outcomes --prices data/prices.csv
 ```
 
-Paste this content:
+Train the model artifact:
+
+```bash
+python -m src.research train --output models/event_alpha_model.json
+```
+
+Generate a validation report:
+
+```bash
+python -m src.research report
+```
+
+Price CSV format:
+
+```text
+ticker,date,close,benchmark_close
+AAPL,2026-06-01,195.00,5200.00
+```
+
+`benchmark_close` is optional. If absent, the report records raw forward returns as excess returns.
+
+## Validation Gates
+
+Live Trading212 execution remains blocked until a validation report confirms all gates:
+
+- At least 10 trading days of paper/demo trading.
+- No critical execution bugs or duplicate-order incidents.
+- Orders are recorded in both broker/demo history and local ledger when using `t212_demo`.
+- Positive net paper P&L after estimated slippage.
+- Max paper drawdown within configured limits.
+- At least 20 paper trade decisions, or a documented insufficient-signal warning.
+- Calibration report exists for the active model.
+- Manual review confirms no obvious data leakage, ticker mapping errors, or stale disclosure handling.
+
+## Dashboard
+
+Open:
+
+```text
+http://localhost:5055
+```
+
+Tabs:
+
+- Overview
+- Signals
+- Paper Ledger
+- Model
+- Live Readiness
+
+## Raspberry Pi Service
+
+After local validation, you can run the same app as a Pi service.
+
+Create `/etc/systemd/system/capitol-alpha.service`:
 
 ```ini
 [Unit]
-Description=Capitol Alpha - Congress Trades Alpha Generator
+Description=Capitol Alpha
 After=network-online.target
 Wants=network-online.target
 
@@ -107,12 +155,8 @@ Environment=PATH=/home/pi/capitol-alpha/.venv/bin:/usr/bin:/bin
 ExecStart=/home/pi/capitol-alpha/.venv/bin/python -m src.main
 Restart=always
 RestartSec=30
-
-# Logging
 StandardOutput=journal
 StandardError=journal
-
-# Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/home/pi/capitol-alpha/data /home/pi/capitol-alpha/logs
@@ -121,83 +165,21 @@ ReadWritePaths=/home/pi/capitol-alpha/data /home/pi/capitol-alpha/logs
 WantedBy=multi-user.target
 ```
 
-**Note:** If your Pi username is not `pi`, replace `pi` with your username throughout.
+Then:
 
 ```bash
-# Enable and start the service
 sudo systemctl daemon-reload
 sudo systemctl enable capitol-alpha
 sudo systemctl start capitol-alpha
-
-# Check status
-sudo systemctl status capitol-alpha
-
-# View logs
 journalctl -u capitol-alpha -f
-```
-
-## Step 6: Accessing the Dashboard
-
-From any device on your local network:
-```
-http://<your-pi-ip>:5055
-```
-
-To find your Pi's IP:
-```bash
-hostname -I
-```
-
-## Maintenance
-
-### View logs
-```bash
-# Application logs
-tail -f ~/capitol-alpha/logs/capitol_alpha.log
-
-# systemd journal
-journalctl -u capitol-alpha -f --no-pager
-```
-
-### Update the code
-```bash
-cd ~/capitol-alpha
-git pull
-sudo systemctl restart capitol-alpha
-```
-
-### Switch from Demo to Live Trading
-1. Edit `config/config.yaml`
-2. Change `environment: "demo"` to `environment: "live"`
-3. `sudo systemctl restart capitol-alpha`
-
-**Only do this after you've verified the system works correctly in demo mode!**
-
-### Database backup
-```bash
-# The SQLite database is a single file
-cp ~/capitol-alpha/data/cta.db ~/capitol-alpha/data/cta.db.backup
 ```
 
 ## Troubleshooting
 
-### "No module named 'src'"
-Make sure you're running from the project root directory:
-```bash
-cd ~/capitol-alpha
-python -m src.main
-```
+If `python -m src.main` reports a missing package, run `pip install -r requirements.txt` inside the virtual environment.
 
-### Telegram bot not sending messages
-- Check `bot_token` is correct
-- Check `chat_id` matches your Telegram user ID
-- Make sure the bot has been started (send `/start` to your bot in Telegram)
+If Trading212 rejects an order, check execution mode, API environment, API permissions, ticker instrument mapping, and rate limits.
 
-### Trading212 errors
-- Verify API key/secret are correct
-- Check you're using the right environment (demo vs live)
-- T212 API has rate limits — the client handles these automatically
+If no trades execute, inspect the dashboard model/risk reasons first. Conservative gates are expected to reject weak or uncalibrated signals.
 
-### High CPU on Pi
-- Increase `poll_interval_minutes` in config (default: 30)
-- The House/Senate S3 downloads are the heaviest operation
+If the dashboard is unavailable, check that port `5055` is free or change the dashboard port in config.
