@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from src.config import Config
-from src.utils.helpers import filing_gap_days, midpoint_amount, transaction_to_direction
+from src.utils.helpers import (
+    filing_gap_days,
+    midpoint_amount,
+    normalize_ticker,
+    transaction_to_direction,
+)
 
 
 SECTOR_BY_TICKER = {
@@ -135,7 +140,7 @@ def feature_hash(features: Dict[str, Any]) -> str:
 
 
 def build_event_features(trade: Dict[str, Any], config: Config) -> Dict[str, Any]:
-    ticker = (trade.get("ticker") or "").upper().strip()
+    ticker = normalize_ticker(trade.get("ticker") or "")
     politician = trade.get("politician_name") or ""
     direction = transaction_to_direction(trade.get("transaction_type", ""))
     gap = filing_gap_days(trade.get("transaction_date", ""), trade.get("filing_date", ""))

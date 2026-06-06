@@ -8,6 +8,7 @@ from src.database import Database
 from src.execution.quotes import MarketQuoteService
 from src.execution.trading212 import Trading212Client
 from src.scoring.features import SECTOR_BY_TICKER
+from src.utils.helpers import normalize_ticker
 
 
 ACTIVE_ORDER_STATUSES = {
@@ -81,6 +82,7 @@ class PaperTradingService:
         signal = self.db.get_signal_by_id(signal_id)
         if not signal:
             return self._rejected_stub(signal_id, "Signal not found.")
+        signal = self._normalised_signal(signal)
 
         duplicate = self._get_active_order(signal_id)
         if duplicate:
@@ -270,6 +272,11 @@ class PaperTradingService:
 
     def _rejected_stub(self, signal_id: int, reason: str) -> Dict[str, Any]:
         return {"ok": False, "signal_id": signal_id, "status": "rejected", "reason": reason}
+
+    def _normalised_signal(self, signal: Dict[str, Any]) -> Dict[str, Any]:
+        clean = dict(signal)
+        clean["ticker"] = normalize_ticker(clean.get("ticker") or "")
+        return clean
 
     def _get_active_order(self, signal_id: int) -> Optional[Dict[str, Any]]:
         orders = self.db.get_recent_paper_orders(limit=500)

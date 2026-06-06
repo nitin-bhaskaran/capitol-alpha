@@ -10,6 +10,7 @@ except ModuleNotFoundError:
     requests = None
 
 from src.config import Config
+from src.utils.helpers import normalize_ticker
 
 logger = logging.getLogger("capitol_alpha.quotes")
 
@@ -33,7 +34,9 @@ class MarketQuoteService:
         if not self.session:
             return None
 
-        ticker = ticker.upper()
+        ticker = normalize_ticker(ticker)
+        if not ticker:
+            return None
         cached = self._cache_get(self._quote_cache, ticker)
         if cached is not None:
             return cached

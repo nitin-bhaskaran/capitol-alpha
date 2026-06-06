@@ -14,7 +14,7 @@ from src.main import CapitolAlpha
 from src.scoring.engine import ScoringEngine
 from src.scoring.features import build_event_features
 from src.scoring.model import EventAlphaEnsemble
-from src.utils.helpers import SensitiveLogFilter
+from src.utils.helpers import SensitiveLogFilter, normalize_ticker
 
 
 def sample_trade():
@@ -170,6 +170,14 @@ class QuantMvpTests(unittest.TestCase):
         self.assertGreater(features["filing_speed_score"], 0.7)
         self.assertEqual(len(features["feature_hash"]), 64)
 
+    def test_ticker_normalization_strips_capitol_trades_suffixes(self):
+        self.assertEqual(normalize_ticker("MSFT:US"), "MSFT")
+        self.assertEqual(normalize_ticker("AAPL_US_EQ"), "AAPL")
+        config = Config()
+        features = build_event_features({**sample_trade(), "ticker": "AMD:US"}, config)
+        self.assertEqual(features["ticker"], "AMD")
+        self.assertEqual(features["sector"], "semiconductors")
+
     def test_model_outputs_tradeable_shape(self):
         config = Config()
         trade = {**sample_trade(), "id": 1}
@@ -241,6 +249,40 @@ class QuantMvpTests(unittest.TestCase):
         self.assertEqual(quote.requests[0]["ticker"], "NVDA")
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0]["ticker"], "NVDA")
+
+    def test_trading212_execution_normalizes_existing_suffix_signal(self):
+        db = self.make_db()
+        config = Config()
+        config.execution.mode = "t212_demo"
+        trade_id = db.insert_raw_trade(sample_trade())
+        signal_id = db.insert_signal({
+            "raw_trade_id": trade_id,
+            "ticker": "MSFT:US",
+            "politician_name": "Nancy Pelosi",
+            "direction": "BUY",
+            "alpha_score": 0.9,
+            "score_breakdown": "{}",
+            "vip_tier": 1,
+            "filing_gap_days": 4,
+            "suggested_action": "SUGGEST_TRADE",
+            "model_version": "test",
+            "expected_excess_return": 0.05,
+            "confidence": 0.9,
+            "tradeable": 1,
+            "rank_order": 1,
+            "execution_mode": "t212_demo",
+            "decision_reason": "test",
+            "feature_hash": "hash",
+        })
+        broker = FakeT212()
+        quote = FakeQuote(price_gbp=250.0)
+
+        result = PaperTradingService(db, config, broker, quote).execute_signal(signal_id)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(broker.orders[0]["ticker"], "MSFT_US_EQ")
+        self.assertEqual(quote.requests[0]["ticker"], "MSFT")
+        self.assertEqual(db.get_recent_paper_orders()[0]["ticker"], "MSFT")
 
     def test_trading212_position_uses_actual_fill_value(self):
         db = self.make_db()

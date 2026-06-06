@@ -92,6 +92,27 @@ def normalize_politician_name(name: str) -> str:
     return name
 
 
+def normalize_ticker(ticker: str) -> str:
+    """Normalise source-specific ticker formats for quotes and broker matching."""
+    if not ticker:
+        return ""
+
+    value = ticker.upper().strip()
+    value = re.sub(r"\s+", "", value)
+    value = value.strip(".$")
+
+    if ":" in value:
+        value = value.split(":", 1)[0]
+
+    if value.endswith("_US_EQ"):
+        value = value[:-6]
+
+    if "." in value:
+        value = value.split(".", 1)[0]
+
+    return re.sub(r"[^A-Z0-9-]", "", value)
+
+
 def parse_date(date_str: str) -> Optional[str]:
     """Try to parse various date formats into YYYY-MM-DD."""
     if not date_str:

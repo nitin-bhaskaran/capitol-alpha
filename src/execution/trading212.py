@@ -20,6 +20,7 @@ except ModuleNotFoundError:
     requests = None
 
 from src.config import Trading212Config
+from src.utils.helpers import normalize_ticker
 
 logger = logging.getLogger("capitol_alpha.trading212")
 
@@ -92,7 +93,9 @@ class Trading212Client:
     def find_instrument(self, ticker: str) -> Optional[Dict[str, Any]]:
         """Find a Trading212 instrument by ticker symbol."""
         instruments = self.get_instruments()
-        ticker_upper = ticker.upper()
+        ticker_upper = normalize_ticker(ticker)
+        if not ticker_upper:
+            return None
 
         for inst in instruments:
             t212_ticker = inst.get("ticker", "")
