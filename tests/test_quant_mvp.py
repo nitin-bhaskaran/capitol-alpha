@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import logging
 from pathlib import Path
 
 from src.alerts.telegram_bot import TelegramBot
@@ -10,6 +11,7 @@ from src.execution.quotes import MarketQuoteService
 from src.scoring.engine import ScoringEngine
 from src.scoring.features import build_event_features
 from src.scoring.model import EventAlphaEnsemble
+from src.utils.helpers import SensitiveLogFilter
 
 
 def sample_trade():
@@ -151,6 +153,22 @@ class QuantMvpTests(unittest.TestCase):
 
         self.assertAlmostEqual(price, 80.0)
         self.assertEqual(len(session.calls), 2)
+
+    def test_sensitive_log_filter_redacts_telegram_bot_token(self):
+        record = logging.LogRecord(
+            name="httpx",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg='POST https://api.telegram.org/bot123456:secret/getMe "HTTP/1.1 200 OK"',
+            args=(),
+            exc_info=None,
+        )
+
+        SensitiveLogFilter().filter(record)
+
+        self.assertIn("bot<redacted>/getMe", record.getMessage())
+        self.assertNotIn("123456:secret", record.getMessage())
 
     def test_scoring_persists_signal_and_feature_snapshot(self):
         db = self.make_db()

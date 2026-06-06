@@ -10,6 +10,20 @@ from typing import Tuple, Optional
 logger = logging.getLogger("capitol_alpha")
 
 
+class SensitiveLogFilter(logging.Filter):
+    """Redact credentials that third-party clients may put into log messages."""
+
+    TELEGRAM_BOT_URL = re.compile(r"(https://api\.telegram\.org/bot)[^/\s\"]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        redacted = self.TELEGRAM_BOT_URL.sub(r"\1<redacted>", message)
+        if redacted != message:
+            record.msg = redacted
+            record.args = ()
+        return True
+
+
 def parse_amount_range(amount_str: str) -> Tuple[Optional[float], Optional[float]]:
     """
     Parse STOCK Act amount ranges like '$1,001 - $15,000' into (low, high) floats.
@@ -132,12 +146,16 @@ def setup_logging():
     from src.config import LOG_DIR
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+    sensitive_filter = SensitiveLogFilter()
+    file_handler = logging.FileHandler(LOG_DIR / "capitol_alpha.log")
+    stream_handler = logging.StreamHandler()
+    file_handler.addFilter(sensitive_filter)
+    stream_handler.addFilter(sensitive_filter)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(LOG_DIR / "capitol_alpha.log"),
-            logging.StreamHandler(),
-        ],
+        handlers=[file_handler, stream_handler],
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     return logging.getLogger("capitol_alpha")
