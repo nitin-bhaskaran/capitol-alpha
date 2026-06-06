@@ -24,6 +24,15 @@ from src.execution.trading212 import Trading212Client
 logger = logging.getLogger("capitol_alpha.telegram")
 
 
+class _SuppressTelegramCancelledUpdateLog(logging.Filter):
+    """Hide python-telegram-bot's expected polling cancellation traceback."""
+
+    NOISY_MESSAGE = "Fetching updates was aborted due to CancelledError()"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return self.NOISY_MESSAGE not in record.getMessage()
+
+
 class TelegramBot:
     def __init__(
         self,
@@ -62,10 +71,20 @@ class TelegramBot:
         logger.info("Telegram bot running")
 
     async def stop(self):
-        if self.app:
-            await self.app.updater.stop()
+        if not self.app:
+            return
+
+        app_logger = logging.getLogger("telegram.ext.Application")
+        suppressor = _SuppressTelegramCancelledUpdateLog()
+        app_logger.addFilter(suppressor)
+        try:
+            if getattr(self.app, "updater", None):
+                await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()
+        finally:
+            app_logger.removeFilter(suppressor)
+            self.app = None
 
     async def send_signal_alert(self, signal: dict):
         """Send a model signal alert with approve/reject buttons."""

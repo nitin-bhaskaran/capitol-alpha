@@ -154,6 +154,37 @@ class FakeLifecycleBot:
         self.stopped = True
 
 
+class CaptureHandler(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+class FakeNoisyUpdater:
+    async def stop(self):
+        return None
+
+
+class FakeNoisyTelegramApp:
+    def __init__(self):
+        self.updater = FakeNoisyUpdater()
+        self.stopped = False
+        self.shutdown_called = False
+
+    async def stop(self):
+        logging.getLogger("telegram.ext.Application").critical(
+            "Fetching updates was aborted due to CancelledError(). "
+            "Suppressing exception to ensure graceful shutdown."
+        )
+        self.stopped = True
+
+    async def shutdown(self):
+        self.shutdown_called = True
+
+
 class FakeScheduler:
     def __init__(self):
         self.running = False
@@ -531,6 +562,27 @@ class TelegramExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("EXECUTION RECORDED", query.edited)
         self.assertIn("Ledger order id: 7", query.edited)
+
+    async def test_stop_suppresses_expected_telegram_cancelled_update_log(self):
+        bot = TelegramBot(Config(), Database(Path(tempfile.mkdtemp()) / "test.db"), paper=FakePaper())
+        fake_app = FakeNoisyTelegramApp()
+        bot.app = fake_app
+        app_logger = logging.getLogger("telegram.ext.Application")
+        handler = CaptureHandler()
+        app_logger.addHandler(handler)
+        previous_level = app_logger.level
+        app_logger.setLevel(logging.CRITICAL)
+
+        try:
+            await bot.stop()
+        finally:
+            app_logger.removeHandler(handler)
+            app_logger.setLevel(previous_level)
+
+        self.assertEqual(handler.records, [])
+        self.assertTrue(fake_app.stopped)
+        self.assertTrue(fake_app.shutdown_called)
+        self.assertIsNone(bot.app)
 
 
 class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):
