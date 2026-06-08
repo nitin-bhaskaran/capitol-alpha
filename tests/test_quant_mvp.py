@@ -8,7 +8,8 @@ from unittest.mock import patch
 
 from src.alerts.telegram_bot import TelegramBot
 from src.config import Config, _merge_unique
-from src.data import house_watcher, senate_watcher
+from src.data import capitol_trades, house_watcher, senate_watcher
+from src.data.html_parser import html_parser_available
 from src.data.pipeline import DataPipeline
 from src.database import Database
 from src.execution.paper import PaperTradingService
@@ -87,6 +88,14 @@ class FakeResponse:
         return self.payload
 
 
+class FakeHtmlResponse:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+
 class FakeQuoteSession:
     def __init__(self):
         self.calls = []
@@ -135,6 +144,30 @@ class FakeHouseRequests:
     def get(self, url, headers=None, timeout=None):
         self.called = True
         return FakeResponse([])
+
+
+class FakeCapitolRequests:
+    def __init__(self):
+        self.urls = []
+
+    def get(self, url, headers=None, timeout=None):
+        self.urls.append(url)
+        return FakeHtmlResponse("""
+            <html><body>
+            <table>
+                <tr><th>Politician</th><th>Issuer</th><th>Published</th><th>Traded</th><th>Gap</th><th>Size</th><th>Type</th></tr>
+                <tr>
+                    <td>Nancy Pelosi</td>
+                    <td><span class="ticker">NVDA:US</span>NVIDIA Corporation</td>
+                    <td>2026-06-08</td>
+                    <td>2026-06-05</td>
+                    <td>3 days</td>
+                    <td>$15,001 - $50,000</td>
+                    <td>Purchase</td>
+                </tr>
+            </table>
+            </body></html>
+        """)
 
 
 class FakePaper:
@@ -332,6 +365,17 @@ class QuantMvpTests(unittest.TestCase):
         self.assertEqual(len(trades), 1)
         self.assertEqual(trades[0]["ticker"], "NVDA")
         self.assertEqual(trades[0]["politician_chamber"], "Senate")
+
+    @unittest.skipUnless(html_parser_available(), "beautifulsoup4 is not installed")
+    def test_capitol_trades_scraper_uses_builtin_parser_fallback(self):
+        fake_requests = FakeCapitolRequests()
+
+        with patch.object(capitol_trades, "requests", fake_requests):
+            trades = capitol_trades.fetch_capitol_trades(pages=1)
+
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades[0]["ticker"], "NVDA:US")
+        self.assertEqual(trades[0]["transaction_type"], "Purchase")
 
     def test_senate_live_filter_keeps_recent_rows_and_caps(self):
         config = Config()

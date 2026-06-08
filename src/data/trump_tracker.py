@@ -24,11 +24,7 @@ try:
 except ModuleNotFoundError:
     requests = None
 
-try:
-    from bs4 import BeautifulSoup
-except ModuleNotFoundError:
-    BeautifulSoup = None
-
+from src.data.html_parser import html_parser_available, parse_html
 from src.utils.helpers import (
     parse_amount_range,
     normalize_politician_name,
@@ -62,7 +58,7 @@ def fetch_trump_trades_from_news() -> List[Dict[str, Any]]:
     This is inherently less structured than congressional data,
     so we cast a wide net and filter aggressively.
     """
-    if requests is None or BeautifulSoup is None:
+    if requests is None or not html_parser_available():
         logger.warning("requests/beautifulsoup4 not installed - skipping Trump tracker")
         return []
 
@@ -86,7 +82,7 @@ def fetch_trump_trades_from_news() -> List[Dict[str, Any]]:
             timeout=30,
         )
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = parse_html(resp.text, logger)
 
         table = soup.find("table")
         if table:

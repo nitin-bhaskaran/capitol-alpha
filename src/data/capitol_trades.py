@@ -13,11 +13,7 @@ try:
 except ModuleNotFoundError:
     requests = None
 
-try:
-    from bs4 import BeautifulSoup
-except ModuleNotFoundError:
-    BeautifulSoup = None
-
+from src.data.html_parser import html_parser_available, parse_html
 from src.utils.helpers import (
     parse_amount_range,
     normalize_politician_name,
@@ -34,7 +30,7 @@ def fetch_capitol_trades(pages: int = 3) -> List[Dict[str, Any]]:
     Scrape recent trades from Capitol Trades.
     Fetches the specified number of pages (default: 3, ~150 trades).
     """
-    if requests is None or BeautifulSoup is None:
+    if requests is None or not html_parser_available():
         logger.warning("requests/beautifulsoup4 not installed - skipping Capitol Trades")
         return []
 
@@ -55,7 +51,7 @@ def fetch_capitol_trades(pages: int = 3) -> List[Dict[str, Any]]:
             resp = requests.get(url, headers=headers, timeout=30)
             resp.raise_for_status()
 
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = parse_html(resp.text, logger)
 
             # Capitol Trades renders a table with trade data
             # The structure may change — this targets the main trades table
