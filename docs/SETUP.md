@@ -141,6 +141,50 @@ Tabs:
 - Model
 - Live Readiness
 
+## Restart After Closing PowerShell
+
+If you accidentally close or kill the PowerShell session, the app stops but the repo, virtual environment, config, database, and logs remain on disk.
+
+Start it again from any new PowerShell window:
+
+```powershell
+cd D:\Projects\capitol-alpha
+.\.venv\Scripts\Activate.ps1
+python -m src.main
+```
+
+You do not need to reinstall requirements unless `.venv` was deleted or packages are missing.
+
+Confirm startup:
+
+```text
+Capitol Alpha starting
+Telegram bot running
+Dashboard running at http://0.0.0.0:5055
+Capitol Alpha is running. Press Ctrl+C to stop.
+```
+
+Open the dashboard:
+
+```text
+http://127.0.0.1:5055
+```
+
+Stop the app with one `Ctrl+C`. A clean stop should end with:
+
+```text
+Shutting down...
+Capitol Alpha stopped.
+```
+
+If restart fails because port `5055` is already in use, an old Python process may still be holding the dashboard port. Find and stop it:
+
+```powershell
+Get-NetTCPConnection -LocalPort 5055 -State Listen | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ }
+```
+
+Then run `python -m src.main` again.
+
 ## Raspberry Pi Service
 
 After local validation, you can run the same app as a Pi service.

@@ -56,6 +56,24 @@ python -m src.main
 
 The dashboard runs at `http://localhost:5055` by default.
 
+## Restart After Closing PowerShell
+
+You do not need to reinstall requirements if `.venv` already exists:
+
+```powershell
+cd D:\Projects\capitol-alpha
+.\.venv\Scripts\Activate.ps1
+python -m src.main
+```
+
+Open the dashboard at `http://127.0.0.1:5055`. Stop the app with one `Ctrl+C`.
+
+If the dashboard port is still held by an old process:
+
+```powershell
+Get-NetTCPConnection -LocalPort 5055 -State Listen | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ }
+```
+
 ## Research Commands
 
 Backfill outcomes from a local price CSV:
