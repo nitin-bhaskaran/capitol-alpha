@@ -1,21 +1,45 @@
-# Capitol Alpha — Configuration
+# Capitol Alpha configuration.
 # Copy this file to config.yaml and fill in your API keys.
-# NEVER commit config.yaml to git (it's in .gitignore).
+# NEVER commit config.yaml to git.
 
 telegram:
-  bot_token: "YOUR_BOT_TOKEN_HERE"
-  chat_id: "YOUR_CHAT_ID_HERE"
-  admin_user_ids:
-    - 123456789
+  bot_token: ""
+  chat_id: ""
+  admin_user_ids: []
 
 trading212:
-  api_key: "YOUR_T212_API_KEY"
-  api_secret: "YOUR_T212_API_SECRET"
-  environment: "demo"    # START WITH DEMO!
+  api_key: ""
+  api_secret: ""
+  environment: "demo"
   max_order_gbp: 500.0
   max_daily_orders: 5
-  default_order_type: "limit"
+  default_order_type: "market"
   limit_offset_pct: 0.5
+
+execution:
+  mode: "t212_demo"          # disabled | local_paper | t212_demo | t212_live
+  live_enabled: false        # Must remain false until validation gates pass.
+  max_order_gbp_demo: 100.0
+  max_order_gbp_live: 50.0
+  default_demo_quantity: 0.1 # Used by local_paper; T212 quantity is sized from a price estimate.
+  default_order_type: "market"
+  validation_days_required: 10
+  allow_fractional_shares: true
+
+risk:
+  max_positions: 8
+  max_single_name_exposure_pct: 10.0
+  max_sector_exposure_pct: 30.0
+  max_daily_loss_pct: 3.0
+  fractional_kelly: 0.25
+  starting_equity_gbp: 10000.0
+
+model:
+  active_model_path: "models/event_alpha_model.json"
+  min_trade_confidence: 0.58
+  min_expected_excess_return: 0.015
+  min_alert_confidence: 0.48
+  default_model_version: "event-alpha-ensemble-v0"
 
 scoring:
   vip_weight: 0.30
@@ -27,6 +51,11 @@ scoring:
   min_score_to_suggest_trade: 0.60
 
 data_sources:
+  # House Stock Watcher S3 is retired/403; Capitol Trades provides House coverage.
+  house_watcher_url: ""
+  senate_watcher_url: "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json"
+  senate_watcher_max_age_days: 120
+  senate_watcher_max_records: 500
   poll_interval_minutes: 30
   capitol_trades_enabled: true
   quiver_api_token: ""
@@ -43,14 +72,44 @@ vip_watchlist:
     - "Dan Crenshaw"
     - "Tommy Tuberville"
     - "Marjorie Taylor Greene"
-  tier2_politicians:
     - "Michael McCaul"
     - "Josh Gottheimer"
-    - "Mark Green"
     - "Ro Khanna"
     - "Kevin Hern"
-    - "Scott Franklin"
+    - "Mark Green"
     - "John Curtis"
+    - "Debbie Wasserman Schultz"
+    - "Susie Lee"
+  tier2_politicians:
+    - "Scott Franklin"
+    - "Pat Roberts"
+    - "Ron Wyden"
+    - "Richard Blumenthal"
+    - "Thomas Carper"
+    - "Sheldon Whitehouse"
+    - "John Hickenlooper"
+    - "Cynthia Lummis"
+    - "Rand Paul"
+    - "Rick Scott"
+    - "Markwayne Mullin"
+    - "Roger Marshall"
+    - "Bill Hagerty"
+    - "John Hoeven"
+    - "Jerry Moran"
+    - "Shelley Moore Capito"
+    - "Pat Toomey"
+    - "David Perdue"
+    - "Kelly Loeffler"
+    - "Tom Malinowski"
+    - "Elaine Luria"
+    - "Abigail Spanberger"
+    - "French Hill"
+    - "Dan Meuser"
+    - "Blake Moore"
+    - "Lloyd Doggett"
+    - "Suzan DelBene"
+    - "Brian Mast"
+    - "Virginia Foxx"
   high_signal_committees:
     - "Armed Services"
     - "Financial Services"
@@ -60,3 +119,14 @@ vip_watchlist:
     - "Appropriations"
     - "Foreign Affairs"
     - "Judiciary"
+    - "Agriculture"
+    - "Banking, Housing, and Urban Affairs"
+    - "Commerce, Science, and Transportation"
+    - "Finance"
+    - "Health, Education, Labor, and Pensions"
+    - "Homeland Security"
+    - "Natural Resources"
+    - "Oversight"
+    - "Science, Space, and Technology"
+    - "Small Business"
+    - "Transportation and Infrastructure"

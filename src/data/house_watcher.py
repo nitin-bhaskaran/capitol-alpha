@@ -1,45 +1,68 @@
-"""
-House Stock Watcher data ingestion.
-Free API — bulk JSON from S3, no auth needed.
-Source: https://housestockwatcher.com/api
-"""
+"""House Stock Watcher data ingestion."""
 
 import json
 import logging
-import requests
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
+try:
+    import requests
+except ModuleNotFoundError:
+    requests = None
 
 from src.utils.helpers import (
-    parse_amount_range,
     normalize_politician_name,
+    parse_amount_range,
     parse_date,
 )
 
 logger = logging.getLogger("capitol_alpha.house_watcher")
 
-DEFAULT_URL = (
+LEGACY_S3_URL = (
     "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com"
     "/data/all_transactions.json"
 )
+DEFAULT_URL = ""
+REQUEST_HEADERS = {
+    "User-Agent": "capitol-alpha/0.1 (+https://github.com/nitin-bhaskaran/capitol-alpha)",
+    "Accept": "application/json,text/plain,*/*",
+}
 
 
 def fetch_house_trades(url: str = DEFAULT_URL) -> List[Dict[str, Any]]:
     """
-    Fetch all House representative trades from the S3 bulk JSON.
+    Fetch all House representative trades from a configured bulk JSON source.
 
-    Returns a list of dicts normalised to our raw_trades schema.
+    The historical House Stock Watcher S3 feed now returns 403, so the default
+    config leaves this direct feed disabled and relies on Capitol Trades for
+    current House coverage.
     """
-    logger.info("Fetching House trades from S3...")
+    if requests is None:
+        logger.warning("requests is not installed - skipping House Stock Watcher")
+        return []
+
+    source_url = (url or DEFAULT_URL or "").strip()
+    if not source_url:
+        logger.info("House Stock Watcher direct feed disabled; Capitol Trades remains enabled")
+        return []
+
+    if source_url == LEGACY_S3_URL:
+        logger.warning(
+            "House Stock Watcher legacy S3 feed is retired/forbidden; "
+            "skipping direct House fetch and relying on Capitol Trades"
+        )
+        return []
+
+    logger.info("Fetching House trades from configured source...")
 
     try:
-        resp = requests.get(url, timeout=60)
+        resp = requests.get(source_url, headers=REQUEST_HEADERS, timeout=60)
         resp.raise_for_status()
         raw_records = resp.json()
     except Exception as e:
-        logger.error(f"Failed to fetch House trades: {e}")
+        logger.warning("Failed to fetch House trades from %s: %s", source_url, e)
         return []
 
-    logger.info(f"Downloaded {len(raw_records)} raw House records")
+    logger.info("Downloaded %s raw House records", len(raw_records))
 
     trades = []
     for rec in raw_records:
@@ -81,8 +104,8 @@ def fetch_house_trades(url: str = DEFAULT_URL) -> List[Dict[str, Any]]:
             trades.append(trade)
 
         except Exception as e:
-            logger.warning(f"Skipping malformed House record: {e}")
+            logger.warning("Skipping malformed House record: %s", e)
             continue
 
-    logger.info(f"Parsed {len(trades)} valid House trades")
+    logger.info("Parsed %s valid House trades", len(trades))
     return trades

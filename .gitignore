@@ -17,6 +17,7 @@ venv/
 
 # Logs
 logs/*.log
+.archive/
 
 # IDE
 .vscode/

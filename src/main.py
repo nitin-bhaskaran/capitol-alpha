@@ -1,14 +1,13 @@
-"""
-Capitol Alpha — Main Orchestrator.
+"""Capitol Alpha main orchestrator.
 
-This is the entry point. It:
-  1. Loads config
-  2. Initialises database, T212 client, Telegram bot
-  3. Runs the data pipeline on a schedule
-  4. Scores new trades
-  5. Sends alerts via Telegram
-  6. Starts the dashboard web server
-  7. Keeps everything running as a long-lived process (ideal for systemd on Pi)
+This entry point:
+  1. Loads config.
+  2. Initialises database, Trading212 client, Telegram bot, and paper ledger.
+  3. Runs the data pipeline on a schedule.
+  4. Scores new trades.
+  5. Sends alerts via Telegram.
+  6. Starts the dashboard web server.
+  7. Keeps everything running as a long-lived process.
 
 Run with:
     python -m src.main
@@ -17,20 +16,31 @@ Run with:
 import asyncio
 import logging
 import signal
-import sys
 import threading
 from datetime import datetime
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+except ModuleNotFoundError:
+    AsyncIOScheduler = None
 
+from src.alerts.telegram_bot import TelegramBot
 from src.config import load_config
 from src.database import Database
-from src.data.pipeline import DataPipeline
-from src.scoring.engine import ScoringEngine
-from src.alerts.telegram_bot import TelegramBot
+from src.execution.paper import PaperTradingService
 from src.execution.trading212 import Trading212Client
-from src.dashboard.app import create_dashboard_app
+from src.scoring.engine import ScoringEngine
 from src.utils.helpers import setup_logging
+
+try:
+    from src.data.pipeline import DataPipeline
+except ModuleNotFoundError:
+    DataPipeline = None
+
+try:
+    from src.dashboard.app import create_dashboard_app
+except ModuleNotFoundError:
+    create_dashboard_app = None
 
 logger = logging.getLogger("capitol_alpha")
 
@@ -39,85 +49,102 @@ class CapitolAlpha:
     """Main application orchestrator."""
 
     def __init__(self):
+        if AsyncIOScheduler is None:
+            raise RuntimeError("apscheduler is required. Run: pip install -r requirements.txt")
+        if DataPipeline is None:
+            raise RuntimeError("data ingestion dependencies are required. Run: pip install -r requirements.txt")
+
         self.config = load_config()
         self.db = Database()
         self.pipeline = DataPipeline(self.db, self.config)
         self.scorer = ScoringEngine(self.db, self.config)
 
-        # Trading212 client (optional — works without it)
         self.t212 = None
         if self.config.trading212.api_key:
             try:
                 self.t212 = Trading212Client(self.config.trading212)
                 logger.info("Trading212 client initialised")
             except Exception as e:
-                logger.warning(f"Trading212 init failed (will continue without): {e}")
+                logger.warning("Trading212 init failed; continuing without it: %s", e)
 
-        # Telegram bot
-        self.bot = TelegramBot(self.config, self.db, self.t212)
-
-        # Scheduler
+        self.paper = PaperTradingService(self.db, self.config, self.t212)
+        self.bot = TelegramBot(self.config, self.db, self.t212, self.paper)
         self.scheduler = AsyncIOScheduler()
+        self._shutdown_requested = False
 
     async def run_cycle(self):
-        """
-        Run one full ingestion + scoring + alerting cycle.
-        Called by the scheduler every N minutes.
-        """
+        """Run one ingestion, scoring, and alerting cycle."""
+        if self._shutdown_requested:
+            logger.info("Skipping cycle because shutdown is in progress")
+            return
+
         logger.info("=" * 60)
-        logger.info(f"Running cycle at {datetime.now().isoformat()}")
+        logger.info("Running cycle at %s", datetime.now().isoformat())
         logger.info("=" * 60)
 
-        # Step 1: Ingest data from all sources
         try:
             summary = self.pipeline.run_full_ingestion()
-            logger.info(f"Ingestion summary: {summary}")
+            logger.info("Ingestion summary: %s", summary)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            self.request_shutdown()
+            logger.info("Cycle interrupted during ingestion")
+            return
         except Exception as e:
-            logger.error(f"Ingestion failed: {e}", exc_info=True)
+            logger.error("Ingestion failed: %s", e, exc_info=True)
             return
 
-        # Step 2: Score unscored trades
         try:
             new_signals = self.scorer.score_unscored_trades()
-            logger.info(f"New signals: {len(new_signals)}")
+            logger.info("New signals: %s", len(new_signals))
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            self.request_shutdown()
+            logger.info("Cycle interrupted during scoring")
+            return
         except Exception as e:
-            logger.error(f"Scoring failed: {e}", exc_info=True)
+            logger.error("Scoring failed: %s", e, exc_info=True)
             return
 
-        # Step 3: Send alerts for actionable signals
         alertable = [
             s for s in new_signals
-            if s.get("suggested_action") in ("ALERT_ONLY", "SUGGEST_TRADE", "HIGH_CONVICTION")
+            if s.get("suggested_action")
+            in ("ALERT_ONLY", "SUGGEST_TRADE", "HIGH_CONVICTION", "REDUCE_IF_HELD")
         ]
 
         for sig in alertable:
             try:
                 await self.bot.send_signal_alert(sig)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                self.request_shutdown()
+                logger.info("Cycle interrupted during alert delivery")
+                return
             except Exception as e:
-                logger.error(f"Failed to alert signal {sig.get('id')}: {e}")
+                logger.error("Failed to alert signal %s: %s", sig.get("id"), e)
 
-        logger.info(f"Cycle complete: {len(alertable)} alerts sent")
+        logger.info("Cycle complete: %s alerts sent", len(alertable))
+
+    def request_shutdown(self):
+        """Mark shutdown intent so in-flight scheduled work can exit quietly."""
+        self._shutdown_requested = True
 
     async def run(self):
         """Start the full application."""
         setup_logging()
-        logger.info("🏛️ Capitol Alpha starting...")
-        logger.info(f"Environment: {self.config.trading212.environment}")
-        logger.info(f"Poll interval: {self.config.data_sources.poll_interval_minutes}m")
+        previous_sigint_handler = self._install_sigint_handler()
+        logger.info("Capitol Alpha starting")
+        logger.info("Environment: %s", self.config.trading212.environment)
+        logger.info("Execution mode: %s", self.config.execution.mode)
+        logger.info("Poll interval: %sm", self.config.data_sources.poll_interval_minutes)
 
-        # Start Telegram bot
         await self.bot.start()
 
-        # Schedule recurring ingestion cycles
         self.scheduler.add_job(
             self.run_cycle,
             "interval",
             minutes=self.config.data_sources.poll_interval_minutes,
             id="data_cycle",
-            next_run_time=datetime.now(),  # Run immediately on startup
+            next_run_time=datetime.now(),
         )
 
-        # Reset T212 daily order counter at midnight
         if self.t212:
             self.scheduler.add_job(
                 lambda: self.t212.reset_daily_counter(),
@@ -129,8 +156,9 @@ class CapitolAlpha:
 
         self.scheduler.start()
 
-        # Start dashboard in a background thread
         try:
+            if create_dashboard_app is None:
+                raise RuntimeError("Flask is not installed")
             dashboard = create_dashboard_app(self.db, self.config)
             dash_thread = threading.Thread(
                 target=lambda: dashboard.run(
@@ -141,24 +169,66 @@ class CapitolAlpha:
             dash_thread.start()
             logger.info("Dashboard running at http://0.0.0.0:5055")
         except Exception as e:
-            logger.warning(f"Dashboard failed to start: {e}")
+            logger.warning("Dashboard failed to start: %s", e)
 
         logger.info("Capitol Alpha is running. Press Ctrl+C to stop.")
 
-        # Keep running
         try:
-            while True:
+            while not self._shutdown_requested:
                 await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            self.request_shutdown()
+            logger.info("Shutdown requested")
         except (KeyboardInterrupt, SystemExit):
-            logger.info("Shutting down...")
-            self.scheduler.shutdown()
+            self.request_shutdown()
+            logger.info("Shutdown requested")
+        finally:
+            try:
+                await self.shutdown()
+            finally:
+                self._restore_sigint_handler(previous_sigint_handler)
+
+    def _install_sigint_handler(self):
+        """Let the first Ctrl+C interrupt blocking sync work on Windows."""
+        try:
+            previous = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            return previous
+        except (ValueError, AttributeError):
+            return None
+
+    def _restore_sigint_handler(self, previous_handler):
+        if previous_handler is None:
+            return
+        try:
+            signal.signal(signal.SIGINT, previous_handler)
+        except (ValueError, AttributeError):
+            pass
+
+    async def shutdown(self):
+        """Stop background services without surfacing Ctrl+C tracebacks."""
+        self.request_shutdown()
+        logger.info("Shutting down...")
+        try:
+            if getattr(self.scheduler, "running", False):
+                self.scheduler.shutdown(wait=False)
+        except Exception as e:
+            logger.warning("Scheduler shutdown failed: %s", e)
+
+        try:
             await self.bot.stop()
-            logger.info("Capitol Alpha stopped.")
+        except Exception as e:
+            logger.warning("Telegram shutdown failed: %s", e)
+
+        logger.info("Capitol Alpha stopped.")
 
 
 def main():
     app = CapitolAlpha()
-    asyncio.run(app.run())
+    try:
+        asyncio.run(app.run())
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
