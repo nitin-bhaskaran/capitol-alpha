@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from src.alerts.telegram_bot import TelegramBot
+from src.alerts.telegram_bot import BadRequest, TelegramBot
 from src.config import Config, _merge_unique
 from src.data import capitol_trades, house_watcher, senate_watcher
 from src.data.html_parser import html_parser_available
@@ -251,6 +251,19 @@ class FakeQuery:
 
     async def edit_message_text(self, text, parse_mode=None, reply_markup=None):
         self.edited = text
+
+
+class ExpiredCallbackQuery:
+    async def answer(self):
+        raise BadRequest("Query is too old and response timeout expired")
+
+
+class DuplicateEditQuery:
+    async def edit_message_text(self, text, parse_mode=None, reply_markup=None):
+        raise BadRequest(
+            "Message is not modified: specified new message content and "
+            "reply markup are exactly the same"
+        )
 
 
 class QuantMvpTests(unittest.TestCase):
@@ -627,6 +640,23 @@ class TelegramExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(fake_app.stopped)
         self.assertTrue(fake_app.shutdown_called)
         self.assertIsNone(bot.app)
+
+    async def test_expired_callback_acknowledgement_is_ignored(self):
+        bot = TelegramBot(Config(), Database(Path(tempfile.mkdtemp()) / "test.db"))
+
+        answered = await bot._answer_callback(ExpiredCallbackQuery())
+
+        self.assertFalse(answered)
+
+    async def test_duplicate_callback_edit_is_idempotent(self):
+        bot = TelegramBot(Config(), Database(Path(tempfile.mkdtemp()) / "test.db"))
+
+        edited = await bot._edit_callback_message(
+            DuplicateEditQuery(),
+            "Already approved",
+        )
+
+        self.assertTrue(edited)
 
 
 class AppLifecycleTests(unittest.IsolatedAsyncioTestCase):

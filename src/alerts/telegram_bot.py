@@ -6,6 +6,7 @@ from typing import Optional
 
 try:
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+    from telegram.error import BadRequest, TelegramError
     from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 except ModuleNotFoundError:
     InlineKeyboardButton = None
@@ -15,6 +16,12 @@ except ModuleNotFoundError:
     CallbackQueryHandler = None
     CommandHandler = None
     ContextTypes = object
+
+    class TelegramError(Exception):
+        pass
+
+    class BadRequest(TelegramError):
+        pass
 
 from src.config import Config
 from src.database import Database
@@ -63,6 +70,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("pending", self._cmd_pending))
         self.app.add_handler(CommandHandler("portfolio", self._cmd_portfolio))
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
+        self.app.add_error_handler(self._handle_error)
 
         logger.info("Telegram bot starting...")
         await self.app.initialize()
@@ -152,15 +160,26 @@ class TelegramBot:
 
     async def _handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        await query.answer()
+        if not query:
+            return
+
+        if not await self._answer_callback(query):
+            return
 
         user_id = query.from_user.id
         if self.config.telegram.admin_user_ids and user_id not in self.config.telegram.admin_user_ids:
-            await query.edit_message_text("You are not authorised to take this action.")
+            await self._edit_callback_message(
+                query, "You are not authorised to take this action."
+            )
             return
 
-        action, _, raw_signal_id = query.data.partition("_")
-        signal_id = int(raw_signal_id) if raw_signal_id else None
+        callback_data = query.data or ""
+        action, _, raw_signal_id = callback_data.partition("_")
+        try:
+            signal_id = int(raw_signal_id) if raw_signal_id else None
+        except ValueError:
+            logger.warning("Ignoring malformed Telegram callback: %s", callback_data)
+            return
 
         if action == "approve" and signal_id:
             await self._handle_approve(query, signal_id)
@@ -171,12 +190,73 @@ class TelegramBot:
         elif action == "info" and signal_id:
             await self._handle_info(query, signal_id)
         elif action == "noted" and signal_id:
-            await query.edit_message_text(query.message.text + "\n\nAcknowledged.", parse_mode="HTML")
+            await self._edit_callback_message(
+                query,
+                query.message.text + "\n\nAcknowledged.",
+                parse_mode="HTML",
+            )
+
+    async def _answer_callback(self, query) -> bool:
+        try:
+            await query.answer()
+            return True
+        except BadRequest as exc:
+            if "query is too old" in str(exc).lower():
+                logger.info("Ignoring expired Telegram callback query")
+                return False
+            logger.warning("Telegram callback acknowledgement rejected: %s", exc)
+            return False
+        except TelegramError as exc:
+            logger.warning("Telegram callback acknowledgement failed: %s", exc)
+            return False
+
+    async def _edit_callback_message(
+        self,
+        query,
+        text: str,
+        parse_mode: Optional[str] = None,
+        reply_markup=None,
+    ) -> bool:
+        try:
+            await query.edit_message_text(
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+            )
+            return True
+        except BadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                logger.info("Ignoring duplicate Telegram callback update")
+                return True
+            logger.warning("Telegram callback message could not be edited: %s", exc)
+            return False
+        except TelegramError as exc:
+            logger.warning("Telegram callback message update failed: %s", exc)
+            return False
+
+    async def _handle_error(self, update: object, context: ContextTypes.DEFAULT_TYPE):
+        error = getattr(context, "error", None)
+        if isinstance(error, BadRequest):
+            message = str(error).lower()
+            if "message is not modified" in message or "query is too old" in message:
+                logger.info("Ignoring benign Telegram callback error: %s", error)
+                return
+        if isinstance(error, TelegramError):
+            logger.warning("Telegram update failed: %s", error)
+            return
+        logger.error(
+            "Unhandled Telegram update error",
+            exc_info=(
+                type(error),
+                error,
+                getattr(error, "__traceback__", None),
+            ) if error else True,
+        )
 
     async def _handle_approve(self, query, signal_id: int):
         signal = self.db.get_signal_by_id(signal_id)
         if not signal:
-            await query.edit_message_text("Signal not found.")
+            await self._edit_callback_message(query, "Signal not found.")
             return
 
         self.db.update_signal_status(signal_id, "approved")
@@ -195,11 +275,18 @@ class TelegramBot:
             InlineKeyboardButton("EXECUTE NOW", callback_data=f"execute_{signal_id}"),
             InlineKeyboardButton("Cancel", callback_data=f"reject_{signal_id}"),
         ]])
-        await query.edit_message_text(confirm_msg, parse_mode="HTML", reply_markup=keyboard)
+        await self._edit_callback_message(
+            query,
+            confirm_msg,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
     async def _handle_execute(self, query, signal_id: int):
         if not self.paper:
-            await query.edit_message_text("Paper execution service is not configured.")
+            await self._edit_callback_message(
+                query, "Paper execution service is not configured."
+            )
             return
 
         result = self.paper.execute_signal(signal_id)
@@ -217,17 +304,21 @@ class TelegramBot:
                 f"Ledger order id: {result.get('order_id', '-')}\n"
                 f"Mode: {self.config.execution.mode}"
             )
-        await query.edit_message_text(msg, parse_mode="HTML")
+        await self._edit_callback_message(query, msg, parse_mode="HTML")
 
     async def _handle_reject(self, query, signal_id: int):
         self.db.update_signal_status(signal_id, "rejected")
-        await query.edit_message_text(query.message.text + "\n\nRejected.", parse_mode="HTML")
+        await self._edit_callback_message(
+            query,
+            query.message.text + "\n\nRejected.",
+            parse_mode="HTML",
+        )
         logger.info("Signal %s rejected by user", signal_id)
 
     async def _handle_info(self, query, signal_id: int):
         signal = self.db.get_signal_by_id(signal_id)
         if not signal:
-            await query.edit_message_text("Signal not found.")
+            await self._edit_callback_message(query, "Signal not found.")
             return
 
         breakdown = json.loads(signal.get("score_breakdown") or "{}")
@@ -250,7 +341,12 @@ class TelegramBot:
             InlineKeyboardButton("Approve", callback_data=f"approve_{signal_id}"),
             InlineKeyboardButton("Reject", callback_data=f"reject_{signal_id}"),
         ]])
-        await query.edit_message_text(info, parse_mode="HTML", reply_markup=keyboard)
+        await self._edit_callback_message(
+            query,
+            info,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
